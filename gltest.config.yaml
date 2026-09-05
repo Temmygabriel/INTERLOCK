@@ -1,14 +1,12 @@
-# gltest configuration — runs integration tests against a GenLayer environment.
-# Local direct-mode tests (tests/direct) use pytest with the genlayer-test plugin and need no network.
-# Integration tests (tests/integration) run via: gltest tests/integration/ -v -s --network <name>
-contract_path: contracts/
-
+# gltest configuration.
+# Direct-mode tests (tests/direct) run with pytest + the gltest plugin and need no
+# network. Integration tests run against a network via: gltest tests/integration -v -s
+# studionet is preconfigured (hosted, gasless) — the default cloud target.
 networks:
-  studionet:
-    # studio.genlayer.com — hosted, gasless (0 GEN balance is fine), rate-limited.
-    # This is the default cloud target for deploy + consensus tests.
-  testnet_asimov:
-    # Testnet Asimov (chain 4221) — requires a funded account (faucet is manual, Cloudflare-gated).
-    accounts:
-      - "${ACCOUNT_PRIVATE_KEY_1}"
-      - "${ACCOUNT_PRIVATE_KEY_2}"
+  default: studionet
+  studionet:    # hosted GenLayer cloud; gasless, no GEN balance required
+    leader_only: false
+
+paths:
+  contracts: contracts/
+  artifacts: artifacts/

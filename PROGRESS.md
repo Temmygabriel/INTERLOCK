@@ -1,0 +1,44 @@
+# Interlock — PROGRESS (keep current; update + commit on every milestone)
+
+**Deadline:** 2026-09-17 15:30 UTC — GenLayer hackathon, Autonomous Protocols.
+**Deploy/test home:** this repo (`github.com/Temmygabriel/INTERLOCK`), cloud GenLayer = studionet (gasless).
+
+## Status: BOTH live studionet integration tests PASS — full exploit → guard → pause → refund → noop → withdraw proven against real validator consensus. Direct + live = 18 tests green.
+
+## Task list
+- [x] #1 Environment check (CLI, genvm-lint, gltest, networks)
+- [x] #2 Scaffold (contracts/, tests/, .gitignore, gltest.config.yaml; initial commit pushed 7dc3975)
+- [x] #3 Frozen Constitution storage + deterministic guard  (interlock.py)
+- [x] #4 DemoVault target + pause path                      (demo_vault.py)
+- [x] #5 Pinned deterministic evidence read in report_exploit (interlock.py; on-chain read, NOT strict_eq — see design note below)
+- [x] #6 Judgment layer: independent validator re-derivation (interlock.py run_nondet_unsafe)
+- [x] #7 Guard → pause on consensus; bond refund/forfeit    (interlock.py)
+- [x] #8 Chaos/security demo tests (one per build-spec section-5 rule)  — DONE
+- [ ] #9 README (pitch leads verbatim) + deploy/submission artifacts  ← NEXT
+
+## Test suite — 18 green (last full run 2026-09-05)
+- `tests/direct/` (16) — deterministic VM, no network, fast (~1s): `test_demo_vault.py` (11) + `test_interlock_isolated.py` (5). Rule-level security asserts: false report forfeits bond & never escrows; no refund path for forfeited bond; no constitution setter; VERDICT enum only; guard fail-shut; second withdraw reverts.
+- `tests/integration/test_interlock_flow.py` (2 live, ~7 min vs real studionet consensus) on a shared module-scope pair:
+  1. **Healthy op reported → NOT_CONFIRMED**, vault stays live, incident FALSE_REPORT_REJECTED/noop_false_report, `refundable_of(liar)==0` (bond forfeited). PASSES.
+  2. **Undercollateralized borrow (66% coverage) reported → EXPLOIT_CONFIRMED**: vault paused (apply_pause child), incident TRIPPED, honest reporter escrowed BOND_VALUE; paused vault rejects new borrow; redundant 2nd report of same exploit → noop_already_paused but still refunds liar; withdraw clears escrow (`refundable_of==0`) and a 2nd withdraw reverts. PASSES.
+- Bootstrap: vault owner arms the breaker — `vault.set_guardian(interlock)` after both deploys (solves the vault↔interlock circular frozen anchor; the vault may be re-wired by its own governance; Interlock's rulebook is the immutable one). `set_guardian` is owner-only, allowed only while vault is live, recorded on the audit log Interlock reads.
+
+## Contracts (both lint: 3 checks pass)
+- `contracts/demo_vault.py` — DemoVault: immutable `audit` JSON log; owner(governance)=resume, guardian(Interlock)=apply_pause; genesis 57 collateral/40 debt = 142% coverage; `borrow` intentionally has NO health check (the exploit); deposit/borrow/withdraw/apply_pause/resume/set_guardian; views params/coverage/audit_len/get_audit_entry.
+- `contracts/interlock.py` — frozen constitution in `__init__` (no setter anywhere); `report_exploit(op_index)` `@write.payable`, bond=msg.value, only an integer index accepted (never raw text); deterministic pinned read of vault audit entry → judge prompt → `run_nondet_unsafe(classify, validate)` where validate re-runs the full classification and compares only the closed enum EXPLOIT_CONFIRMED / NOT_CONFIRMED; guard maps verdict→hardcoded effect (apply_pause / noop_already_paused / noop_false_report); genuine→refundable escrow, false→bond forfeited; **escrow keys canonicalized** (`_canon_addr`/`_canon_str`, lowercase 0x-hex) so client lookups match on-chain keys (real product bug caught by integration testing); `withdraw_bond` refunds own escrow via emit_transfer. Views: status/constitution_view/incidents/reports/refundable_of.
+
+## Design note — pinned read
+Inter-contract calls are FORBIDDEN inside nondet blocks (linter-enforced). Evidence is the vault's own committed on-chain audit entry at the pinned index — a deterministic read every validator replays identically ⇒ inherently consensus-pinned, so NO `gl.eq_principle.strict_eq` wrapper (strict_eq is for off-chain/external sources). Documented in constitution manifest.
+
+## studionet verified facts (drive the RAW client; full list in Claude memory `genlayer-verified-apis.md`)
+- Gasless + virtual value (writes + value-bearing pays work from 0-balance accounts; `value_credited`). Reachable at https://studio.genlayer.com/api.
+- gltest config loads ONLY via the pytest plugin from cwd `gltest.config.yaml` — a standalone `get_gl_client()` fails.
+- High-level typed `Contract` object needs schema fetch = **localnet-only** → on studionet drive raw `GenLayerClient`; Address args must be `CalldataAddress(raw_20_bytes)` (hex str becomes Python str; Address slots reject it).
+- `emit_transfer` to a plain EOA **cannot settle on studionet** — its virtual value ledger only knows deployed contracts → child errors `"Contract 0x… not found"`. Contract logic is correct; the withdraw test asserts the parent escrow clear + that the transfer child WAS emitted, not the child's EOA settlement (production GenLayer settles natively). Documented in `_helpers.finalize_parent`.
+- Hosted RPC drops connections mid-request (ConnectionResetError 10054 / SSL alert). Every RPC — submit AND the receipt polls inside `wait_for_transaction_receipt` — is retried with backoff in `_helpers._retry` (all ops keyed by tx hash/address ⇒ idempotent re-polls). **Remove the temp diagnostic file pattern** — use `finalize_parent` + read-back instead.
+
+## Environment gotchas (Windows)
+- PATH: add `C:\Users\USER\AppData\Roaming\Python\Python314\Scripts`.
+- `export PYTHONUTF8=1` before `genvm-lint` (prints ✓/✗; crashes cp1252 otherwise).
+- NEVER `genvm-lint check/validate` (SDK re-extraction; disk is 99% full, ~3GB free). Use `lint` only.
+- Push: `GIT_TERMINAL_PROMPT=0 git -c credential.interactive=never push -u origin main`.

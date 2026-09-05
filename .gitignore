@@ -6,6 +6,8 @@ __pycache__/
 
 # GenLayer / gltest
 .gltest_cache/
+artifacts/
+.pytest_cache/
 genlayer-key*.json
 *.keystore
 
