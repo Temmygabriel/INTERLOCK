@@ -11,13 +11,16 @@
 import { read } from "./gen.js";
 import { sendWrite } from "./tx.js";
 import * as ID from "./identity.js";
+import { CONFIG } from "./config.js";
 
 // ----------------------------------------------------------------------------
-// DEPLOY CARD pair (see PROGRESS.md — persists on studionet, gasless).
-// Swap these two to point the panel at any vault + its Interlock guard.
+// Target pair (vault + its Interlock guard). Resolved from ./config.js, which
+// `node build.mjs` regenerates at deploy time from the Vercel env vars
+// INTERLOCK_ADDRESS / VAULT_ADDRESS; the committed config.js defaults are the
+// on-chain DEPLOY CARD pair (see PROGRESS.md).
 // ----------------------------------------------------------------------------
-const INTERLOCK = "0x2fB65F934618a17320c288d684aaB97dC00Ac300";
-const VAULT = "0xCCB1fa65e9A85023324ccaA7aa44959b5BA448a7";
+const INTERLOCK = CONFIG.interlock;
+const VAULT = CONFIG.vault;
 
 const $ = (id) => document.getElementById(id);
 const canon = (a) => String(a).toLowerCase();

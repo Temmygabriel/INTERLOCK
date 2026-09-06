@@ -16,8 +16,12 @@ genlayer-key*.json
 .env.*
 !*.env.example
 
+# Local-only reference docs — NEVER pushed (stay on this machine)
+aegis-wallet-integration.md
+
 # Node (if any frontend tooling appears)
 node_modules/
+frontend/dist/          # build.mjs output (Vercel serves this; env-injected config)
 
 # OS / editor
 .DS_Store
