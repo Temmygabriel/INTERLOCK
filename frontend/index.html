@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>INTERLOCK — Safety Breaker</title>
+  <meta name="description" content="Interlock: an autonomous circuit breaker on GenLayer. Consensus proves the exploit, the panel trips, and its rulebook can never move a token." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%23C23B2E'/><path d='M8 2v7' stroke='%23E7E4DC' stroke-width='2'/><circle cx='8' cy='12.4' r='1.6' fill='%23E7E4DC'/></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- ethers v6 UMD must load before the ESM modules below (tx.js reads globalThis.ethers) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.2/ethers.umd.min.js"></script>
+</head>
+<body>
+  <main class="wall">
+    <div class="housing" id="housing" data-state="running">
+
+      <!-- ── hazard edge ─────────────────────────────────────────── -->
+      <div class="stripe top" aria-hidden="true"></div>
+
+      <!-- ── the panel face ──────────────────────────────────────── -->
+      <div class="face">
+
+        <header class="brandbar">
+          <div class="brand">
+            <h1 class="brand-word">INTERLOCK</h1>
+            <div class="brand-sub">AUTONOMOUS SAFETY BREAKER&nbsp;·&nbsp;GENVM</div>
+          </div>
+          <div class="identity" id="identity">
+            <button class="id-chip" id="idChip" type="button" aria-haspopup="true" aria-expanded="false">
+              <span class="id-dot" id="idDot"></span>
+              <span class="id-addr mono" id="idAddr">no identity</span>
+              <span class="id-caret" aria-hidden="true">▾</span>
+            </button>
+
+            <div class="id-pop" id="idPop" hidden>
+              <div class="pop-head">
+                <span class="id-dot" id="popDot"></span>
+                <span class="pop-title">Signer identity</span>
+              </div>
+              <p class="pop-copy">Every transaction on this panel is signed by a keypair
+                this browser generated and keeps <em>only here</em>. It never leaves this
+                machine and never touches a wallet or the network.</p>
+
+              <div class="pop-row">
+                <span class="pop-label">Address</span>
+                <span class="mono pop-val" id="popAddr"></span>
+                <button class="mini" id="copyAddr" type="button" title="copy">COPY</button>
+              </div>
+              <div class="pop-row">
+                <span class="pop-label">Private key</span>
+                <span class="mono pop-val" id="popKey">—</span>
+                <button class="mini" id="revealKey" type="button">SHOW</button>
+                <button class="mini" id="copyKey" type="button">COPY</button>
+              </div>
+
+              <div class="pop-actions">
+                <button class="mini" id="idCreate" type="button" hidden>＋ CREATE</button>
+                <button class="mini" id="idImport" type="button">IMPORT KEY…</button>
+                <button class="mini" id="idRegen" type="button">REGENERATE</button>
+                <button class="mini" id="idClear" type="button">REMOVE</button>
+              </div>
+              <div class="import-box" id="importBox" hidden>
+                <input class="import-in mono" id="importKey" type="password" placeholder="0x… private key (64 hex)" spellcheck="false" />
+                <div class="import-actions">
+                  <button class="mini" id="importApply" type="button">APPLY</button>
+                  <button class="mini" id="importCancel" type="button">CANCEL</button>
+                  <span class="import-msg" id="importMsg"></span>
+                </div>
+              </div>
+
+              <div class="pop-sep"></div>
+              <div class="pop-mm">
+                <div class="mm-row">
+                  <span class="pop-label">MetaMask</span>
+                  <button class="mini" id="mmConnect" type="button">CONNECT (DISPLAY ONLY)</button>
+                </div>
+                <div class="mm-addr mono" id="mmAddr">not connected</div>
+                <p class="mm-note" id="mmNote"></p>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <!-- ── status light ──────────────────────────────────────── -->
+        <section class="status-unit" aria-label="breaker status">
+          <div class="lamp-well">
+            <div class="lamp" id="lamp"></div>
+          </div>
+          <div class="status-right">
+            <div class="status-word" id="statusWord">RUNNING</div>
+            <div class="status-note mono" id="statusNote">—</div>
+          </div>
+        </section>
+
+        <!-- ── readouts ──────────────────────────────────────────── -->
+        <section class="readouts" aria-label="live readouts">
+          <div class="ro">
+            <div class="ro-label">TARGET</div>
+            <div class="ro-val mono" id="roTarget">—</div>
+            <div class="ro-sub mono" id="roGuard">—</div>
+          </div>
+          <div class="ro ro-wide">
+            <div class="ro-label">COVERAGE&nbsp;<span class="ro-sub mono" id="roCovSub"></span></div>
+            <div class="cov-row">
+              <div class="cov-track"><div class="cov-fill" id="covFill"></div><div class="cov-mark" id="covMark"></div></div>
+              <div class="ro-val ro-big mono" id="roCoverage">—</div>
+            </div>
+            <div class="ro-sub mono" id="roCollat">collateral — · debt —</div>
+          </div>
+          <div class="ro">
+            <div class="ro-label">LAST CHECK</div>
+            <div class="ro-val mono" id="roLast">—</div>
+          </div>
+          <div class="ro">
+            <div class="ro-label">REPORTS</div>
+            <div class="ro-val mono" id="roReports">—</div>
+          </div>
+          <div class="ro">
+            <div class="ro-label">INCIDENTS</div>
+            <div class="ro-val mono" id="roIncidents">—</div>
+          </div>
+          <div class="ro">
+            <div class="ro-label">MIN BOND</div>
+            <div class="ro-val mono" id="roBond">—</div>
+          </div>
+        </section>
+
+        <!-- ── report / evidence ─────────────────────────────────── -->
+        <section class="plate report-unit" aria-label="report suspected exploit">
+          <div class="plate-title">REPORT SUSPECTED EXPLOIT</div>
+          <p class="plate-copy">Evidence is never typed in — it is already on the chain.
+            Pick the pinned audit-log entry you believe is an exploit. Interlock signs
+            nothing but the index; validator consensus does the judging.</p>
+
+          <div class="report-grid">
+            <div class="field">
+              <div class="field-label">TARGET</div>
+              <div class="field-box mono" id="fTarget">DemoVault</div>
+            </div>
+            <div class="field">
+              <div class="field-label">EVIDENCE — AUDIT ENTRY</div>
+              <div class="field-box">
+                <select class="mono" id="fIndex" title="pinned audit entry to report"></select>
+                <span class="of mono" id="fIndexOf"></span>
+              </div>
+            </div>
+            <div class="field">
+              <div class="field-label">BOND (REFUNDABLE IF REAL)</div>
+              <div class="field-box mono" id="fBond">— GEN</div>
+            </div>
+            <div class="field">
+              <div class="field-label">SIGNED BY</div>
+              <div class="field-box mono" id="fSigner">—</div>
+            </div>
+          </div>
+
+          <div class="evidence-preview" id="evidencePreview" hidden>
+            <div class="ev-title mono">PINNED READ — VAULT AUDIT ENTRY</div>
+            <div class="ev-rows" id="evRows"></div>
+          </div>
+
+          <div class="submit-row">
+            <button class="submit" id="reportBtn" type="button" disabled>SUBMIT REPORT</button>
+            <div class="report-msg mono" id="reportMsg"></div>
+          </div>
+
+          <div class="checklist" id="checklist" hidden></div>
+          <div class="verdict mono" id="verdict" hidden></div>
+        </section>
+
+        <!-- ── reset — physically locked ─────────────────────────── -->
+        <section class="reset-unit" aria-label="reset — locked">
+          <div class="reset-lid">
+            <div class="reset-word">
+              <span class="big">RESET</span>
+              <span class="reset-flag">LOCKED · GOVERNANCE ONLY</span>
+            </div>
+            <div class="reset-lock" id="resetLock" aria-hidden="true">
+              <span class="rl-text">▓▓&nbsp; TRIPPED — LOCKED &nbsp;▓▓</span>
+            </div>
+          </div>
+          <p class="reset-caption mono"><strong>This panel has no unlock path.</strong> Only the
+            vault owner (governance) may resume the vault — Interlock can never call it.</p>
+        </section>
+
+      </div><!-- /face -->
+
+      <!-- ── incident log plate ──────────────────────────────────── -->
+      <section class="plate log-unit" aria-label="incident log">
+        <div class="plate-title">INCIDENT LOG</div>
+        <ul class="log mono" id="incidentLog">
+          <li class="log-empty" id="logEmpty">— no incidents —</li>
+        </ul>
+      </section>
+
+      <!-- ── netline / addresses ─────────────────────────────────── -->
+      <div class="netline mono" id="netline">studionet · chain 61999 · reading…</div>
+      <div class="stripe bottom" aria-hidden="true"></div>
+    </div>
+  </main>
+
+  <noscript>
+    <div style="color:#E7E4DC;background:#26282B;padding:2rem;text-align:center;font-family:monospace">INTERLOCK panel requires JavaScript to read the live GenLayer contracts.</div>
+  </noscript>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

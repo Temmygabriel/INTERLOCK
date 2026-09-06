@@ -3,7 +3,7 @@
 **Deadline:** 2026-09-17 15:30 UTC — GenLayer hackathon, Autonomous Protocols.
 **Deploy/test home:** this repo (`github.com/Temmygabriel/INTERLOCK`), cloud GenLayer = studionet (gasless).
 
-## Status: LIVE end-to-end PROVEN from a browser key — a value-bearing (7-bond) report signed by a MetaMask-style EIP-155 key ran through real validator LLM consensus (NOT_CONFIRMED → FALSE_REPORT_REJECTED, no pause, bond forfeited). Direct + live = 18 tests green. Next: safety-panel UI (deploy to Vercel) then README.
+## Status: SAFETY PANEL DEPLOY-READY (tasks #12 + #13 done) — a static, Vercel-ready panel in `frontend/`, wired LIVE to the deploy-card pair. Headless-verified (Edge): RUNNING @ 142% coverage, browser identity auto-created (chip filled), all incidents rendered, connecting-placeholder cleared. QA caught + fixed one real bug: `identity.js` built Wallets as `new eth().Wallet(k)` (constructing the arrow helper) → now `new (eth().Wallet)(k)`. Next: user deploys `frontend` on Vercel to view it, then #9 README + #14 optional real-MetaMask signer.
 
 ## Task list
 - [x] #1 Environment check (CLI, genvm-lint, gltest, networks)
@@ -16,8 +16,8 @@
 - [x] #8 Chaos/security demo tests (one per build-spec section-5 rule)  — DONE
 - [x] #10 Diagnose MetaMask signing + prove ethers/browser sign path live  — DONE (see frontend section below)
 - [x] #11 JS GenLayer wire module (read + sign + broadcast) — DONE (`frontend/gen.js`, `frontend/tx.js`)
-- [ ] #12 Safety-panel UI (interlock-design-spec.md) + live demo wiring  ← IN PROGRESS (Vercel-deployable static panel)
-- [ ] #13 Identity chip (browser keypair default + MetaMask display-only; NOT branded "Aegis")
+- [x] #12 Safety-panel UI (interlock-design-spec.md) + live demo wiring  — DONE (static, Vercel-deployable: `frontend/index.html` + `style.css` + `app.js`)
+- [x] #13 Identity chip (browser keypair default + MetaMask display-only; NOT branded "Aegis")  — DONE (`frontend/identity.js`; auto-created signer chip in header)
 - [ ] #14 Optional real MetaMask signer mode + test
 - [ ] #9 README (pitch leads verbatim) + deploy/submission artifacts  ← NEXT after UI
 
@@ -28,6 +28,14 @@
 - **Tx shape that settles:** legacy type-0 EIP-155, `gasPrice: 0`, `gas: 500000`, `to` = consensus-main, `value` = bond, `chainId 61999`. (A type-2/1559 envelope is accepted at the EVM layer but the ledger won't credit value.) SDK `_prepare_transaction` signs this legacy shape even on studionet.
 - **No account funding needed** — studionet value is virtual/cosmetic; a brand-new random key (0-balance, never seen) settles bonded writes. `value_credited:true` on the record.
 - Full proof log (2026-09-06): STEP 0 codec reads match Python; fresh key `0x046A16eBE…` → `sendWrite(report_exploit, [0], {value:7})` → `consensus txId` → report_count 2→3 → vault not paused → incident `FALSE_REPORT_REJECTED/noop_false_report` → `refundable_of(reporter)==0`.
+
+## Safety-panel UI — DEPLOY-READY (tasks #12 + #13, 2026-09-06)
+- **Files** (static, no build step): `frontend/index.html`, `frontend/style.css` (design-spec tokens: housing #26282B / face #3A3D40 / running #3B8B4A / tripped #C23B2E / hazard-yellow stripes only / readout #E7E4DC; Archivo Black + IBM Plex Mono), `frontend/app.js`, `frontend/identity.js`. Reuses `gen.js`/`tx.js`. ethers v6 UMD from cdnjs loaded before the ESM modules (tx.js reads `globalThis.ethers`).
+- **Deploy to Vercel:** create project from repo root, Framework Preset = Other, **Root Directory = `frontend`** (or drag the `frontend` folder as a standalone static project). HTTPS required (RPC fetch + clipboard). No env vars. The panel hardcodes the DEPLOY CARD pair (interlock `0x2fB6…c300`, vault `0xCCB1…8a7`) at the top of `app.js` — swap the two consts to point at any vault + guard.
+- **What it shows (all real, nothing fabricated):** status lamp RUNNING/CHECKING/TRIPPED + note; TARGET + guardian/armed; COVERAGE % meter (100% solvency mark; red < 100%); supplied/debt; LAST CHECK; reports & incidents counters; MIN BOND; a report unit (choose a pinned **audit entry index** — evidence is never typed in, only an index; the panel previews the pinned entry from `get_audit_entry`); the verdict checklist marks only verifiable phases (pinned read ✓ → broadcast tx ✓ → "validator consensus — awaiting verdict" with a live elapsed counter); the outcome is the real incident (FALSE REPORT — REJECTED, bond forfeited, or EXPLOIT CONFIRMED → TRIPPED). Reset plate: always "LOCKED · GOVERNANCE ONLY"; on a confirmed trip the red plate slides across (500ms) — the one animated moment, plus the light flip. `prefers-reduced-motion` skips both. Incident log = flat list, newest last-12.
+- **Honest-state choices:** studionet does not stream mid-flight validator votes, so the design-spec "vote chips landing one at a time" is rendered as a real phase checklist instead — no fabricated per-vote chips. If the RPC is unreachable on first load the panel says OFFLINE (it never claims RUNNING without a live read); later network errors keep the last-known state and flag the netline.
+- **Identity chip (task #13):** header chip + popover. Browser-keypair default: on first visit the panel auto-creates a key in localStorage (filled green dot = present) and labels it clearly; the popover offers reveal/copy key, import-existing, regenerate, remove; a line states the key never leaves the browser. MetaMask is **display-only** (never asked to sign) and only appears if the wallet is detected. NOT branded Aegis — the aegis doc is only the reference pattern.
+- **QA (headless Edge against the live pair):** rendered RUNNING @ 142%, 3/3 incidents, identity chip created, connecting placeholder cleared. **Real bug found + fixed:** `identity.js` originally built wallets as `new eth().Wallet(k)` where `eth` is an arrow helper → `TypeError: eth is not a constructor` swallowed by `catch{}` → `loadIdentity()` always null → chip "no identity". Fixed via `new (eth().Wallet)(k)`. Caught only because a headless DOM dump showed the chip empty while every RPC value rendered.
 
 ## Test suite — 18 green (last full run 2026-09-05)
 - `tests/direct/` (16) — deterministic VM, no network, fast (~1s): `test_demo_vault.py` (11) + `test_interlock_isolated.py` (5). Rule-level security asserts: false report forfeits bond & never escrows; no refund path for forfeited bond; no constitution setter; VERDICT enum only; guard fail-shut; second withdraw reverts.
