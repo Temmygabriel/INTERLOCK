@@ -209,6 +209,18 @@ body {
 .pop-mm .mm-addr { font-size: 10.5px; color: var(--ink-dim); }
 .pop-mm .mm-note { font-size: 10px; line-height: 1.4; color: var(--ink-faint); margin: 6px 0 0; }
 .pop-mm .mm-addr.on { color: var(--running); }
+.pop-mm .mm-radio {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--edge);
+}
+.pop-mm .mm-radio .pop-label { width: auto; }
+.pop-mm .mm-opt {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; letter-spacing: 0.06em; color: var(--ink-dim);
+  cursor: pointer; user-select: none;
+}
+.pop-mm .mm-opt input[type="radio"] { accent-color: var(--running); cursor: pointer; margin: 0; }
+.pop-mm .mm-opt:has(input:checked) { color: var(--running); font-weight: 600; }
 
 /* ── status unit ── */
 

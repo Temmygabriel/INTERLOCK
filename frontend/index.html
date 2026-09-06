@@ -75,10 +75,15 @@
               <div class="pop-mm">
                 <div class="mm-row">
                   <span class="pop-label">MetaMask</span>
-                  <button class="mini" id="mmConnect" type="button">CONNECT (DISPLAY ONLY)</button>
+                  <button class="mini" id="mmConnect" type="button">CONNECT</button>
                 </div>
                 <div class="mm-addr mono" id="mmAddr">not connected</div>
                 <p class="mm-note" id="mmNote"></p>
+                <div class="mm-radio" id="signMode" hidden>
+                  <span class="pop-label">Report signer</span>
+                  <label class="mm-opt"><input type="radio" name="signMode" id="selBrowser" checked /><span>BROWSER IDENTITY</span></label>
+                  <label class="mm-opt"><input type="radio" name="signMode" id="selMetamask" /><span>METAMASK</span></label>
+                </div>
               </div>
             </div>
           </div>

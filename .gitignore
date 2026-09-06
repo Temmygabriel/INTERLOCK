@@ -21,7 +21,8 @@ aegis-wallet-integration.md
 
 # Node (if any frontend tooling appears)
 node_modules/
-frontend/dist/          # build.mjs output (Vercel serves this; env-injected config)
+# build.mjs output (Vercel serves this; env-injected config)
+frontend/dist/
 
 # OS / editor
 .DS_Store

@@ -78,6 +78,20 @@ export function signer() {
   return walletFromKey(id.key);
 }
 
+/** Wrap an EIP-1193 provider (MetaMask) as a minimal signer for tx.js.
+ * getAddress() returns the connected account (canonical lowercase); request()
+ * forwards RPC calls straight to MetaMask. The key never leaves MetaMask —
+ * eth_sendTransaction signs inside the wallet, then returns the tx hash. */
+export function makeMetaMaskSigner(provider, account) {
+  const address = String(account).toLowerCase();
+  return {
+    kind: "metamask",
+    address,
+    async getAddress() { return address; },
+    request(o) { return provider.request(o); },
+  };
+}
+
 export function shortAddr(a) {
   if (a == null) return "—";
   const s = String(a).toLowerCase();

@@ -9,7 +9,7 @@
 // only real, verifiable phases — never fabricated chips.
 
 import { read } from "./gen.js";
-import { sendWrite } from "./tx.js";
+import { ensureStudionet, sendWrite } from "./tx.js";
 import * as ID from "./identity.js";
 import { CONFIG } from "./config.js";
 
@@ -53,6 +53,9 @@ let vp = null;        // vault params
 let inFlight = false; // a report is being judged
 let lastAuditLen = null;
 let lastIncCount = null;
+let mmSigner = null;          // active MetaMask signer (once connected)
+let mmAccount = null;         // connected MetaMask address (canonical lowercase)
+let signerMode = "browser";   // "browser" | "metamask" — who signs reports
 
 function renderStateWord(word, note, noteBad = false) {
   $("statusWord").textContent = word;
@@ -90,8 +93,7 @@ function applyReadouts(armed) {
   $("roIncidents").textContent = "#" + num(st.incident_count);
   $("roBond").textContent = num(st.min_bond) + " GEN";
   $("fBond").textContent = num(st.min_bond) + " GEN";
-  const idAddr = ID.loadIdentity()?.address;
-  $("fSigner").textContent = idAddr ? ID.shortAddr(idAddr) : "—";
+  $("fSigner").textContent = activeSignerLabel();
 }
 
 function renderIncidents() {
@@ -222,6 +224,7 @@ async function submitReport() {
   if (inFlight) return;
   const id = ID.loadIdentity();
   if (!id) { ID.createIdentity(); renderIdentity(); }
+  const useMM = signerMode === "metamask" && mmSigner; // MetaMask confirm-popup signer
   const idx = Number($("fIndex").value ?? 0);
   const bond = BigInt(num(st.min_bond));
 
@@ -242,7 +245,7 @@ async function submitReport() {
     '<div class="chk"><span class="tick"></span><span>Validator consensus — awaiting verdict</span><span class="chk-t"></span></div>';
   const [p1, p2, p3] = cl.querySelectorAll(".chk");
 
-  const reporter = id.address;
+  const reporter = useMM ? mmAccount : id.address;
   const before = num(st.report_count);
 
   // 1 · pinned read — same on-chain view the guard pins; verify the index exists
@@ -255,12 +258,13 @@ async function submitReport() {
   await sleep(300);
   setPhase(p1, "done", entryOk ? "verified" : "read failed");
 
-  // 2 · sign + broadcast (browser identity — nothing is sent to a wallet)
+  // 2 · sign + broadcast (browser identity signs offline; MetaMask shows a
+  // confirm popup for the bond — expected, it is a payable report)
   setPhase(p2, "now");
   let txId = null;
   const t0 = Date.now();
   try {
-    const wallet = ID.signer();
+    const wallet = useMM ? mmSigner : ID.signer();
     txId = await sendWrite(wallet, INTERLOCK, "report_exploit", [idx], { value: bond });
     setPhase(p2, "done", "tx " + ID.shortAddr(txId) + " · submitted");
   } catch (e) {
@@ -330,6 +334,13 @@ async function submitReport() {
 
 // ---------------------------------------------------------------- identity
 
+function activeSignerLabel() {
+  const mmOn = signerMode === "metamask" && mmSigner;
+  if (mmOn) return ID.shortAddr(mmAccount);
+  const id = ID.loadIdentity();
+  return id ? ID.shortAddr(id.address) : "—";
+}
+
 function renderIdentity() {
   const id = ID.loadIdentity();
   const has = !!id;
@@ -345,8 +356,9 @@ function renderIdentity() {
   $("idCreate").hidden = has;
   $("idRegen").hidden = !has;
   $("idClear").hidden = !has;
-  $("fSigner").textContent = has ? ID.shortAddr(id.address) : "—";
-  $("reportBtn").disabled = !has || inFlight || (vp && vp.paused === true);
+  $("fSigner").textContent = activeSignerLabel();
+  const canSign = has || (mmSigner && signerMode === "metamask");
+  $("reportBtn").disabled = !canSign || inFlight || (vp && vp.paused === true);
 }
 
 async function copyText(s) {
@@ -420,25 +432,58 @@ function wireIdentity() {
     }
   });
 
-  // MetaMask — optional, DISPLAY ONLY. Signing always uses the browser identity.
+  // MetaMask — OPTIONAL real signer. Connect → ensure studionet is added &
+  // selected → wrap as a signer → let the user pick who signs reports
+  // (browser identity stays the default; MetaMask only signs if chosen).
   const mm = typeof window.ethereum !== "undefined" && window.ethereum;
   const mmAddr = $("mmAddr"), mmNote = $("mmNote"), mmBtn = $("mmConnect");
+  const selBrowser = $("selBrowser"), selMetamask = $("selMetamask");
+
+  function updateMMNote() {
+    if (!mmSigner) {
+      mmNote.textContent = "Connected — reports are still signed by your browser identity. Pick META below to sign with MetaMask instead.";
+      return;
+    }
+    if (signerMode === "metamask") {
+      mmNote.textContent = "Signing reports with MetaMask. Each report opens a MetaMask confirm for the report bond — 0 network fee, studionet is gasless.";
+    } else {
+      mmNote.textContent = "Connected. Switch to META to sign reports with this account.";
+    }
+  }
+  function setSignerMode(m) {
+    if (m === "metamask" && !mmSigner) return;
+    signerMode = m;
+    selBrowser.checked = m === "browser";
+    selMetamask.checked = m === "metamask";
+    renderIdentity();
+    updateMMNote();
+  }
+  selBrowser.addEventListener("change", () => { if (selBrowser.checked) setSignerMode("browser"); });
+  selMetamask.addEventListener("change", () => { if (selMetamask.checked) setSignerMode("metamask"); });
+
   if (!mm) {
     mmBtn.disabled = true;
-    mmNote.textContent = "No MetaMask wallet detected. It is optional and display-only here.";
+    mmNote.textContent = "No MetaMask wallet detected. Optional — your browser identity signs every report.";
     return;
   }
   mmBtn.addEventListener("click", async () => {
+    mmBtn.disabled = true;
     try {
       const accs = await mm.request({ method: "eth_requestAccounts" });
       const a = accs?.[0];
-      if (a) {
-        mmAddr.textContent = ID.shortAddr(a) + "  (" + ID.checksum(a).slice(0, 10) + "…)";
-        mmAddr.classList.add("on");
-        mmBtn.textContent = "CONNECTED";
-        mmNote.textContent = "Display only — this panel never asks MetaMask to sign. Transactions are signed by your browser identity above.";
-      }
+      if (!a) throw new Error("no account returned");
+      // studionet (chainId 61999 = 0xF22F, gasless) must be added + selected so
+      // MetaMask can show the correct (zero) fee instead of re-typing the tx.
+      await ensureStudionet(mm);
+      mmAccount = String(a).toLowerCase();
+      mmSigner = ID.makeMetaMaskSigner(mm, mmAccount);
+      mmAddr.textContent = ID.shortAddr(mmAccount) + "  (" + ID.checksum(mmAccount).slice(0, 10) + "…)";
+      mmAddr.classList.add("on");
+      mmBtn.textContent = "CONNECTED";
+      $("signMode").hidden = false;
+      setSignerMode(signerMode); // re-render with the signer now available
     } catch (e) {
+      mmBtn.disabled = false;
       mmNote.textContent = "Connection declined: " + (e?.message ?? e).slice(0, 80);
     }
   });

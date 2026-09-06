@@ -92,21 +92,78 @@ export async function sendWrite(signer, recipient, method, args, opts = {}) {
   }
   tx.gasLimit = gas;
 
-  let raw;
-  if (typeof signer.signTransaction === "function") {
-    raw = await signer.signTransaction(tx);            // browser identity / ethers
-  } else {
-    raw = await signer.sendTransaction(tx);            // EIP-1193 (MetaMask): already broadcast
-  }
-
   let evmHash;
-  if (typeof raw === "string") {
+  if (typeof signer.signTransaction === "function") {
+    // ethers.Wallet (browser identity): sign offline, exactly as built above.
+    const raw = await signer.signTransaction(tx);
     evmHash = await rpc("eth_sendRawTransaction", [raw]);
+  } else if (typeof signer.request === "function") {
+    // EIP-1193 provider (MetaMask): hand it an explicit LEGACY type-0 tx with
+    // every field hex-encoded (gasPrice 0, fixed gas). MetaMask's
+    // eth_sendTransaction re-estimates gas/fees itself and can silently re-type
+    // to EIP-1559 (type 2), which drops gasPrice and makes studionet's ledger
+    // refuse to credit the bond. Specifying type/gas/gasPrice leaves nothing to
+    // guess. Call ensureStudionet(provider) BEFORE this so MetaMask knows the
+    // network (else it cannot reason about the zero fee).
+    const params = metaMaskRequest(tx, from);
+    console.info("[interlock] MetaMask eth_sendTransaction params:", params);
+    evmHash = await signer.request({ method: "eth_sendTransaction", params: [params] });
   } else {
-    evmHash = raw.hash;
+    throw new Error("unsupported signer: pass an ethers.Wallet (signTransaction) or an EIP-1193 wrapper (request)");
   }
 
   return waitConsensusTxId(evmHash);
+}
+
+/** Convert the internal ethers-style tx to the exact JSON-RPC object handed to
+ * MetaMask for eth_sendTransaction. Legacy type-0, every value a hex string.
+ * chainId is intentionally omitted — MetaMask signs for whatever network is
+ * selected; ensureStudionet() switches it to studionet beforehand. */
+export function metaMaskRequest(tx, from) {
+  const hx = (v) => (typeof v === "bigint" ? "0x" + v.toString(16) : v);
+  return {
+    type: "0x0",
+    from,
+    to: tx.to,
+    data: tx.data,
+    nonce: hx(tx.nonce),
+    gas: hx(tx.gasLimit ?? tx.gas),
+    gasPrice: hx(tx.gasPrice ?? 0n),
+    value: hx(tx.value ?? 0n),
+  };
+}
+
+// studionet chain params for MetaMask (chainId 61999 decimal = 0xF22F). Gasless
+// + virtual value, so MetaMask must know the network before it can show the
+// (zero) fee on a report. blockExplorerUrls intentionally omitted — studionet
+// has no public explorer.
+export const STUDIONET_CHAIN = {
+  chainId: "0xf22f",
+  chainName: "GenLayer Studio Network (studionet)",
+  nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
+  rpcUrls: ["https://studio.genlayer.com/api"],
+};
+
+/** Ensure the EIP-1193 provider has studionet added AND selected. Call before
+ * the first eth_sendTransaction so MetaMask does not re-type or misquote gas.
+ * 4902 = "chain not added yet" (MetaMask's wallet_switchEthereumChain error). */
+export async function ensureStudionet(provider) {
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: STUDIONET_CHAIN.chainId }],
+    });
+  } catch (e) {
+    if (e && e.code === 4902) {
+      await provider.request({ method: "wallet_addEthereumChain", params: [STUDIONET_CHAIN] });
+      await provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: STUDIONET_CHAIN.chainId }],
+      });
+    } else {
+      throw e;
+    }
+  }
 }
 
 /** Resolve the GenLayer transaction id for a broadcast EVM hash.
