@@ -1,0 +1,10 @@
+{
+  "name": "interlock-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Interlock safety-panel frontend (static; browser loads ethers v6 from CDN). ethers here is only for Node tooling/tests.",
+  "type": "module",
+  "dependencies": {
+    "ethers": "^6.17.0"
+  }
+}
