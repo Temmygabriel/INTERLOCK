@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Interlock — a padlock whose shackle is the breaker arm">
+  <!-- Interlock mark — v2 palette. Navy #1D3557 body on paper; hazard #D9A22C
+       shackle reads as the switch arm (closed when running, lifted when tripped). -->
+  <path d="M12 14.4 V10.6 a4 4 0 0 1 8 0 v3.8" fill="none" stroke="#D9A22C" stroke-width="3.2" stroke-linecap="round"/>
+  <rect x="8.6" y="13.4" width="14.8" height="13.6" rx="3" fill="#1D3557"/>
+  <circle cx="16" cy="18.8" r="2.3" fill="#F4F7FA"/>
+  <rect x="15" y="20.8" width="2" height="4.4" rx="1" fill="#F4F7FA"/>
+</svg>

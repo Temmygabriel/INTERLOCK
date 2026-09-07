@@ -20,4 +20,9 @@
 export const CONFIG = {
   interlock: "0x2fB65F934618a17320c288d684aaB97dC00Ac300",
   vault: "0xCCB1fa65e9A85023324ccaA7aa44959b5BA448a7",
+  // The dedicated exploit-lab pair (a vault Interlock's demo owner controls,
+  // where a real borrow pushes coverage < 100% so a live trip can be shown).
+  // null until it is deployed on studionet (see PROGRESS.md task #17). Env
+  // vars LAB_INTERLOCK_ADDRESS / LAB_VAULT_ADDRESS override at build time.
+  lab: null,
 };

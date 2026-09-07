@@ -3,212 +3,400 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>INTERLOCK — Safety Breaker</title>
-  <meta name="description" content="Interlock: an autonomous circuit breaker on GenLayer. Consensus proves the exploit, the panel trips, and its rulebook can never move a token." />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%23C23B2E'/><path d='M8 2v7' stroke='%23E7E4DC' stroke-width='2'/><circle cx='8' cy='12.4' r='1.6' fill='%23E7E4DC'/></svg>" />
+  <title>Interlock — Autonomous Safety Breaker</title>
+  <meta name="description" content="Interlock: an autonomous circuit breaker on GenLayer. Validator consensus proves the exploit, the breaker trips, and its rulebook can never move a token." />
+  <link rel="icon" type="image/svg+xml" href="./interlock-mark.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./style.css" />
   <!-- ethers v6 UMD must load before the ESM modules below (tx.js reads globalThis.ethers) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.2/ethers.umd.min.js"></script>
 </head>
 <body>
-  <main class="wall">
-    <div class="housing" id="housing" data-state="running">
 
-      <!-- ── hazard edge ─────────────────────────────────────────── -->
-      <div class="stripe top" aria-hidden="true"></div>
+  <!-- ════════════════ site header · brand + signer chip ════════════════ -->
+  <header class="sitehead">
+    <div class="wrap">
+      <div class="brand">
+        <img class="brand-mark" src="./interlock-mark.svg" alt="" width="30" height="30" />
+        <div>
+          <h1 class="brand-word">INTERLOCK</h1>
+          <div class="brand-sub">AUTONOMOUS SAFETY BREAKER · GENVM</div>
+        </div>
+      </div>
 
-      <!-- ── the panel face ──────────────────────────────────────── -->
-      <div class="face">
+      <div class="identity" id="identity">
+        <button class="id-chip" id="idChip" type="button" aria-haspopup="true" aria-expanded="false">
+          <span class="id-dot" id="idDot"></span>
+          <span class="id-addr mono" id="idAddr">no signer</span>
+          <span class="id-caret" aria-hidden="true">▾</span>
+        </button>
 
-        <header class="brandbar">
-          <div class="brand">
-            <h1 class="brand-word">INTERLOCK</h1>
-            <div class="brand-sub">AUTONOMOUS SAFETY BREAKER&nbsp;·&nbsp;GENVM</div>
+        <div class="id-pop" id="idPop" hidden>
+          <div class="pop-head">
+            <span class="id-dot" id="popDot"></span>
+            <span class="pop-title">Signer</span>
           </div>
-          <div class="identity" id="identity">
-            <button class="id-chip" id="idChip" type="button" aria-haspopup="true" aria-expanded="false">
-              <span class="id-dot" id="idDot"></span>
-              <span class="id-addr mono" id="idAddr">no identity</span>
-              <span class="id-caret" aria-hidden="true">▾</span>
-            </button>
+          <p class="pop-copy">Whoever is active below signs every report. The browser
+            identity is a keypair this browser generated and keeps <em>only here</em> —
+            it never leaves this machine. MetaMask is optional and signs through the
+            wallet instead.</p>
 
-            <div class="id-pop" id="idPop" hidden>
-              <div class="pop-head">
-                <span class="id-dot" id="popDot"></span>
-                <span class="pop-title">Signer identity</span>
-              </div>
-              <p class="pop-copy">Every transaction on this panel is signed by a keypair
-                this browser generated and keeps <em>only here</em>. It never leaves this
-                machine and never touches a wallet or the network.</p>
+          <!-- active signer · both rows always visible (MetaMask not gated) -->
+          <div class="pop-sep"></div>
+          <div class="pop-row" style="width:100%">
+            <span class="pop-label" style="width:auto">Report signer</span>
+          </div>
+          <div class="mm-radio" id="signMode">
+            <label class="sign-row">
+              <input type="radio" name="signMode" id="selBrowser" checked />
+              <span>Browser identity</span>
+              <small>auto-created · this browser</small>
+            </label>
+            <label class="sign-row">
+              <input type="radio" name="signMode" id="selMetamask" disabled />
+              <span>MetaMask</span>
+              <small id="mmAddr" class="mm-addr">not connected</small>
+            </label>
+            <p class="signer-honesty" id="signerLine"></p>
+          </div>
 
-              <div class="pop-row">
-                <span class="pop-label">Address</span>
-                <span class="mono pop-val" id="popAddr"></span>
-                <button class="mini" id="copyAddr" type="button" title="copy">COPY</button>
-              </div>
-              <div class="pop-row">
-                <span class="pop-label">Private key</span>
-                <span class="mono pop-val" id="popKey">—</span>
-                <button class="mini" id="revealKey" type="button">SHOW</button>
-                <button class="mini" id="copyKey" type="button">COPY</button>
-              </div>
-
-              <div class="pop-actions">
-                <button class="mini" id="idCreate" type="button" hidden>＋ CREATE</button>
-                <button class="mini" id="idImport" type="button">IMPORT KEY…</button>
-                <button class="mini" id="idRegen" type="button">REGENERATE</button>
-                <button class="mini" id="idClear" type="button">REMOVE</button>
-              </div>
-              <div class="import-box" id="importBox" hidden>
-                <input class="import-in mono" id="importKey" type="password" placeholder="0x… private key (64 hex)" spellcheck="false" />
-                <div class="import-actions">
-                  <button class="mini" id="importApply" type="button">APPLY</button>
-                  <button class="mini" id="importCancel" type="button">CANCEL</button>
-                  <span class="import-msg" id="importMsg"></span>
-                </div>
-              </div>
-
-              <div class="pop-sep"></div>
-              <div class="pop-mm">
-                <div class="mm-row">
-                  <span class="pop-label">MetaMask</span>
-                  <button class="mini" id="mmConnect" type="button">CONNECT</button>
-                </div>
-                <div class="mm-addr mono" id="mmAddr">not connected</div>
-                <p class="mm-note" id="mmNote"></p>
-                <div class="mm-radio" id="signMode" hidden>
-                  <span class="pop-label">Report signer</span>
-                  <label class="mm-opt"><input type="radio" name="signMode" id="selBrowser" checked /><span>BROWSER IDENTITY</span></label>
-                  <label class="mm-opt"><input type="radio" name="signMode" id="selMetamask" /><span>METAMASK</span></label>
-                </div>
-              </div>
-            </div>
+          <!-- browser-identity details -->
+          <div class="pop-row" style="margin-top:4px">
+            <span class="pop-label">Address</span>
+            <span class="mono pop-val" id="popAddr"></span>
+            <button class="mini" id="copyAddr" type="button" title="copy">COPY</button>
           </div>
-        </header>
-
-        <!-- ── status light ──────────────────────────────────────── -->
-        <section class="status-unit" aria-label="breaker status">
-          <div class="lamp-well">
-            <div class="lamp" id="lamp"></div>
+          <div class="pop-row">
+            <span class="pop-label">Private key</span>
+            <span class="mono pop-val" id="popKey">—</span>
+            <button class="mini" id="revealKey" type="button">SHOW</button>
+            <button class="mini" id="copyKey" type="button">COPY</button>
           </div>
-          <div class="status-right">
-            <div class="status-word" id="statusWord">RUNNING</div>
-            <div class="status-note mono" id="statusNote">—</div>
+          <div class="pop-actions">
+            <button class="mini" id="idCreate" type="button" hidden>＋ CREATE</button>
+            <button class="mini" id="idImport" type="button">IMPORT KEY…</button>
+            <button class="mini" id="idRegen" type="button">REGENERATE</button>
+            <button class="mini" id="idClear" type="button">REMOVE</button>
           </div>
-        </section>
-
-        <!-- ── readouts ──────────────────────────────────────────── -->
-        <section class="readouts" aria-label="live readouts">
-          <div class="ro">
-            <div class="ro-label">TARGET</div>
-            <div class="ro-val mono" id="roTarget">—</div>
-            <div class="ro-sub mono" id="roGuard">—</div>
-          </div>
-          <div class="ro ro-wide">
-            <div class="ro-label">COVERAGE&nbsp;<span class="ro-sub mono" id="roCovSub"></span></div>
-            <div class="cov-row">
-              <div class="cov-track"><div class="cov-fill" id="covFill"></div><div class="cov-mark" id="covMark"></div></div>
-              <div class="ro-val ro-big mono" id="roCoverage">—</div>
-            </div>
-            <div class="ro-sub mono" id="roCollat">collateral — · debt —</div>
-          </div>
-          <div class="ro">
-            <div class="ro-label">LAST CHECK</div>
-            <div class="ro-val mono" id="roLast">—</div>
-          </div>
-          <div class="ro">
-            <div class="ro-label">REPORTS</div>
-            <div class="ro-val mono" id="roReports">—</div>
-          </div>
-          <div class="ro">
-            <div class="ro-label">INCIDENTS</div>
-            <div class="ro-val mono" id="roIncidents">—</div>
-          </div>
-          <div class="ro">
-            <div class="ro-label">MIN BOND</div>
-            <div class="ro-val mono" id="roBond">—</div>
-          </div>
-        </section>
-
-        <!-- ── report / evidence ─────────────────────────────────── -->
-        <section class="plate report-unit" aria-label="report suspected exploit">
-          <div class="plate-title">REPORT SUSPECTED EXPLOIT</div>
-          <p class="plate-copy">Evidence is never typed in — it is already on the chain.
-            Pick the pinned audit-log entry you believe is an exploit. Interlock signs
-            nothing but the index; validator consensus does the judging.</p>
-
-          <div class="report-grid">
-            <div class="field">
-              <div class="field-label">TARGET</div>
-              <div class="field-box mono" id="fTarget">DemoVault</div>
-            </div>
-            <div class="field">
-              <div class="field-label">EVIDENCE — AUDIT ENTRY</div>
-              <div class="field-box">
-                <select class="mono" id="fIndex" title="pinned audit entry to report"></select>
-                <span class="of mono" id="fIndexOf"></span>
-              </div>
-            </div>
-            <div class="field">
-              <div class="field-label">BOND (REFUNDABLE IF REAL)</div>
-              <div class="field-box mono" id="fBond">— GEN</div>
-            </div>
-            <div class="field">
-              <div class="field-label">SIGNED BY</div>
-              <div class="field-box mono" id="fSigner">—</div>
+          <div class="import-box" id="importBox" hidden>
+            <input class="import-in mono" id="importKey" type="password" placeholder="0x… private key (64 hex)" spellcheck="false" />
+            <div class="import-actions">
+              <button class="mini" id="importApply" type="button">APPLY</button>
+              <button class="mini" id="importCancel" type="button">CANCEL</button>
+              <span class="import-msg" id="importMsg"></span>
             </div>
           </div>
 
-          <div class="evidence-preview" id="evidencePreview" hidden>
-            <div class="ev-title mono">PINNED READ — VAULT AUDIT ENTRY</div>
-            <div class="ev-rows" id="evRows"></div>
+          <!-- MetaMask connect -->
+          <div class="pop-sep"></div>
+          <div class="mm-row">
+            <span class="pop-label">MetaMask wallet</span>
+            <button class="mini" id="mmConnect" type="button">CONNECT</button>
           </div>
-
-          <div class="submit-row">
-            <button class="submit" id="reportBtn" type="button" disabled>SUBMIT REPORT</button>
-            <div class="report-msg mono" id="reportMsg"></div>
-          </div>
-
-          <div class="checklist" id="checklist" hidden></div>
-          <div class="verdict mono" id="verdict" hidden></div>
-        </section>
-
-        <!-- ── reset — physically locked ─────────────────────────── -->
-        <section class="reset-unit" aria-label="reset — locked">
-          <div class="reset-lid">
-            <div class="reset-word">
-              <span class="big">RESET</span>
-              <span class="reset-flag">LOCKED · GOVERNANCE ONLY</span>
-            </div>
-            <div class="reset-lock" id="resetLock" aria-hidden="true">
-              <span class="rl-text">▓▓&nbsp; TRIPPED — LOCKED &nbsp;▓▓</span>
-            </div>
-          </div>
-          <p class="reset-caption mono"><strong>This panel has no unlock path.</strong> Only the
-            vault owner (governance) may resume the vault — Interlock can never call it.</p>
-        </section>
-
-      </div><!-- /face -->
-
-      <!-- ── incident log plate ──────────────────────────────────── -->
-      <section class="plate log-unit" aria-label="incident log">
-        <div class="plate-title">INCIDENT LOG</div>
-        <ul class="log mono" id="incidentLog">
-          <li class="log-empty" id="logEmpty">— no incidents —</li>
-        </ul>
-      </section>
-
-      <!-- ── netline / addresses ─────────────────────────────────── -->
-      <div class="netline mono" id="netline">studionet · chain 61999 · reading…</div>
-      <div class="stripe bottom" aria-hidden="true"></div>
+          <p class="mm-note" id="mmNote">Connect to enable MetaMask signing. studionet
+            (chain 61999) is added automatically — it is gasless.</p>
+        </div>
+      </div>
     </div>
+  </header>
+
+  <main>
+
+    <!-- ════════════════ hero · FIG.1 ════════════════ -->
+    <section class="hero" aria-label="Interlock — autonomous safety breaker">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="eyebrow">FIG. 1 — AUTONOMOUS SAFETY BREAKER</p>
+          <h1 class="hero-title">INTERLOCK</h1>
+          <p class="hero-sub">Pause the exploit before governance can vote.
+            One report. One direction. <em>Consensus proves it, the breaker trips,
+            and its rulebook can never move a token.</em></p>
+          <div class="pills">
+            <span class="pill"><span class="x">✕</span> MOVE FUNDS</span>
+            <span class="pill"><span class="x">✕</span> CHANGE OWNERSHIP</span>
+            <span class="pill"><span class="x">✕</span> REWRITE ITSELF</span>
+            <span class="pill"><span class="x">✕</span> SELF-UNLOCK</span>
+          </div>
+          <p class="pill-caption">frozen at deployment · no setter exists for any of the above.</p>
+          <div class="hero-cta">
+            <a class="btn btn-primary" href="#watch">Watch it happen <span class="arr">→</span></a>
+            <a class="btn btn-ghost" href="#try">Try it yourself <span class="arr">→</span></a>
+          </div>
+        </div>
+
+        <div class="switch-panel" aria-hidden="true">
+          <div class="switch-fig">SCHEMATIC · NORMALLY CLOSED</div>
+          <div class="sw-wrap">
+            <svg viewBox="0 0 56 60" width="150" height="161">
+              <rect class="sw-base" x="4" y="53" width="48" height="4" rx="2"></rect>
+              <circle cx="40" cy="52" r="3" fill="#1D3557"></circle>
+              <rect class="sw-arm" x="16" y="49.5" width="26" height="5" rx="2.5"></rect>
+              <circle cx="16" cy="52" r="3.4" fill="#1D3557"></circle>
+            </svg>
+          </div>
+          <div class="sw-cap"><span class="state">CLOSED</span> — running</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════ problem ════════════════ -->
+    <section class="sec" aria-label="the problem">
+      <div class="wrap">
+        <p class="eyebrow">THE PROBLEM</p>
+        <div class="cards">
+          <div class="card safe-side">
+            <div class="tag safe">THE VOTE — TOO SLOW</div>
+            <h3>Governance proves the exploit, then votes to pause.</h3>
+            <p>A public vote needs time to form. Hours of exposure while a live
+              exploit drains the vault. Slow by design — and while it deliberates,
+              the money is gone.</p>
+          </div>
+          <div class="card danger-side">
+            <div class="tag danger">THE ADMIN KEY — TOO POWERFUL</div>
+            <h3>A single key can pause the protocol instantly.</h3>
+            <p>Fast — but it is exactly the key a compromise targets. One leaked key
+              and the attacker can pause, unpause, or do far worse than pause. Speed
+              bought with a single point of failure.</p>
+          </div>
+        </div>
+        <p class="close-line">Interlock is a third option.</p>
+      </div>
+    </section>
+
+    <!-- ════════════════ the two demo paths ════════════════ -->
+    <section class="sec" aria-label="the two demo paths">
+      <div class="wrap">
+        <p class="eyebrow">FIG. 2 — TWO WAYS TO WATCH</p>
+        <div class="demo-grid">
+
+          <!-- PATH A · watch -->
+          <div class="card demo-card safe-side" id="watch">
+            <div class="tag hazard">PATH A — WATCH IT HAPPEN</div>
+            <div class="demo-body">
+              <h3>An exploit fires. You just watch the breaker trip.</h3>
+              <p>A risky borrow is pushed into the demo vault automatically, reported,
+                and judged by real validator consensus — no clicks from you.</p>
+            </div>
+            <div class="demo-note">Same real transaction underneath — you're just not driving it.</div>
+            <div class="demo-status" id="watchStatus">Waiting for the exploit-lab vault…</div>
+            <button class="btn btn-primary" id="watchRun" type="button">Run the exploit <span class="arr">→</span></button>
+          </div>
+
+          <!-- PATH B · try -->
+          <div class="card demo-card" id="try">
+            <div class="tag">PATH B — TRY IT YOURSELF</div>
+            <div class="demo-body">
+              <h3>Pick the entry you think is an exploit.</h3>
+              <p>Every option is a real on-chain audit entry, in plain language. You
+                never type evidence — just an index. Interlock signs nothing else.</p>
+            </div>
+            <div class="demo-note">Same real transaction underneath — you're driving it.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════ live breaker instrument ════════════════ -->
+    <section class="sec" aria-label="live breaker instrument">
+      <div class="wrap">
+        <p class="eyebrow">FIG. 3 — LIVE BREAKER INSTRUMENT</p>
+        <h2 class="sec-title">The breaker, live.</h2>
+        <p class="sec-sub">Everything below is read from the live contracts on
+          studionet — real state, real validator verdicts, real history. Nothing is
+          fabricated.</p>
+
+        <div class="instrument-shell">
+          <div class="housing" id="housing" data-state="running">
+            <div class="inst-head">
+              <div aria-hidden="true">
+                <svg viewBox="0 0 56 60" width="96" height="103">
+                  <rect class="sw-base" x="4" y="53" width="48" height="4" rx="2"></rect>
+                  <circle cx="40" cy="52" r="3" fill="#1D3557"></circle>
+                  <path class="sw-spark" d="M40 38 l1.6 4.4 M34.5 42.5 l4.4 1.6 M44 44.5 l-3.4 -2.6 M41 49 l1 3.2 M35.6 47 l3.6 1" stroke="#D9A22C" stroke-width="1.6" stroke-linecap="round"></path>
+                  <rect class="sw-arm" x="16" y="49.5" width="26" height="5" rx="2.5"></rect>
+                  <circle cx="16" cy="52" r="3.4" fill="#1D3557"></circle>
+                </svg>
+                <div class="sw-cap"><span class="state">CIRCUIT</span></div>
+              </div>
+              <div class="inst-status">
+                <div class="status-word" id="statusWord" role="status" aria-live="polite">RUNNING</div>
+                <p class="status-note" id="statusNote">connecting to studionet…</p>
+              </div>
+            </div>
+
+            <div class="readouts" aria-label="live readouts">
+              <div class="ro">
+                <div class="ro-label">TARGET</div>
+                <div class="ro-val ro-big mono" id="roTarget">DemoVault</div>
+                <div class="ro-sub mono" id="roGuard">—</div>
+              </div>
+              <div class="ro">
+                <div class="ro-label">COVERAGE&nbsp;<span class="mono" id="roCovSub"></span></div>
+                <div class="cov-track"><div class="cov-fill" id="covFill"></div></div>
+                <div class="ro-val mono" id="roCoverage">—</div>
+                <div class="ro-sub mono" id="roCollat">supplied — · debt —</div>
+              </div>
+              <div class="ro">
+                <div class="ro-label">LAST CHECK</div>
+                <div class="ro-val mono" id="roLast">—</div>
+              </div>
+              <div class="ro">
+                <div class="ro-label">REPORTS</div>
+                <div class="ro-val mono" id="roReports">—</div>
+              </div>
+              <div class="ro">
+                <div class="ro-label">INCIDENTS</div>
+                <div class="ro-val mono" id="roIncidents">—</div>
+              </div>
+              <div class="ro">
+                <div class="ro-label">MIN BOND</div>
+                <div class="ro-val mono" id="roBond">—</div>
+              </div>
+            </div>
+
+            <!-- verdict · both outcomes equal weight -->
+            <div class="verdict mono" id="verdict" hidden></div>
+
+            <!-- report form (drives the instrument above) -->
+            <div class="plate-title" style="margin-top:6px">REPORT SUSPECTED EXPLOIT</div>
+            <p class="plate-copy">Evidence is never typed in — it is already on the
+              chain. Pick the pinned audit entry you believe is an exploit.</p>
+            <div class="report-grid">
+              <div class="field">
+                <div class="field-label">EVIDENCE — AUDIT ENTRY</div>
+                <div class="field-box">
+                  <select id="fIndex" title="pinned audit entry to report"></select>
+                </div>
+                <div class="ro-sub mono" id="fIndexOf" style="margin-top:4px"></div>
+              </div>
+              <div class="field">
+                <div class="field-label">BOND — REFUNDABLE IF THE EXPLOIT IS REAL</div>
+                <div class="field-box mono" id="fBond">— GEN</div>
+                <div class="ro-sub mono" style="margin-top:4px">signed by <span id="fSigner">—</span></div>
+              </div>
+            </div>
+            <div class="evidence" id="evidencePreview" hidden>
+              <span class="ev-k">PINNED READ — VAULT AUDIT ENTRY</span>
+              <span id="evRows"></span>
+            </div>
+            <div class="submit-row">
+              <button class="submit" id="reportBtn" type="button" disabled>Report this entry</button>
+              <div class="report-msg" id="reportMsg"></div>
+            </div>
+            <div class="chips" id="checklist" hidden></div>
+          </div>
+
+          <!-- incident log -->
+          <div class="card log-card">
+            <div class="log-title">INCIDENT LOG — REAL VERDICTS</div>
+            <ul class="log" id="incidentLog">
+              <li class="log-empty" id="logEmpty">— no incidents —</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="netline mono" id="netline">studionet · chain 61999 · reading…</div>
+      </div>
+    </section>
+
+    <!-- ════════════════ protect your protocol ════════════════ -->
+    <section class="sec" aria-label="protect your protocol">
+      <div class="wrap">
+        <p class="eyebrow">FOR LENDING PROTOCOLS ON GENLAYER</p>
+        <h2 class="sec-title">Protect your protocol</h2>
+        <p class="sec-sub">Interlock is a guardian, not a bank. You keep full
+          ownership of your contract; Interlock holds one role — the ability to
+          pause — and only when validators independently confirm an exploit.</p>
+        <div class="steps">
+          <div class="step">
+            <span class="step-no">01</span>
+            <h3>Deploy Interlock</h3>
+            <p>Point a fresh Interlock at your contract's address. Its constitution is
+              frozen at deployment — it can only ever pause that one target.</p>
+          </div>
+          <div class="step">
+            <span class="step-no">02</span>
+            <h3>Authorize it as guardian</h3>
+            <p>Your vault owner calls one method granting Interlock the pause role.
+              This is recorded on your audit log — the same log validators read.</p>
+          </div>
+          <div class="step">
+            <span class="step-no">03</span>
+            <h3>Done</h3>
+            <p>Now consensus watches every operation. On a confirmed exploit the
+              breaker trips and your protocol pauses. Only your governance resumes it.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════ integration guide ════════════════ -->
+    <section class="sec" aria-label="integration guide">
+      <div class="wrap">
+        <p class="eyebrow">INTEGRATION GUIDE</p>
+        <h2 class="sec-title">Add Interlock to a live vault</h2>
+
+        <div class="decision-box">
+          <strong>First, check one thing.</strong> Does your contract already expose a
+          pause method on an owner-swappable guardian slot — like <code>DemoVault</code>'s
+          <code>apply_pause</code> + <code>set_guardian</code>? If yes, use <strong>Step A</strong>.
+          Different shape? Use <strong>Step A′</strong>.
+        </div>
+
+        <div class="steps-a">
+          <div class="card">
+            <div class="tag">STEP A — DIRECT DEPLOY</div>
+            <h3>Matching pause + guardian slot</h3>
+            <p>Deploy Interlock pointed straight at your contract:</p>
+            <code class="cmd">genvm deploy interlock.py \
+  --arg target_address=0x…your_vault… \
+  --arg governance=0x…your_owner…</code>
+          </div>
+          <div class="card">
+            <div class="tag hazard">STEP A′ — ADAPTER</div>
+            <h3>Differently-shaped contract</h3>
+            <p>Deploy a small adapter next to your contract that exposes one
+              guardian pause, and point Interlock at the adapter. Same chain, no
+              bridge, no relay service:</p>
+            <code class="cmd">genvm deploy adapter.py \
+  --arg target_address=0x…your_vault… \
+  --arg pause_selector="pause(uint256)"</code>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="tag">STEP B — AUTHORIZE AS GUARDIAN</div>
+          <h3>Grant the pause role</h3>
+          <p>From the vault owner account, arm the breaker (owner-only, only while
+            the vault is live — it is written to the audit log):</p>
+          <code class="cmd">set_guardian(0x…interlock_address…)</code>
+        </div>
+
+        <div class="card safe-side" style="margin-top:16px">
+          <div class="tag safe">STEP C — DONE</div>
+          <p style="margin-top:4px"><span class="agree">✓</span> Interlock is now your
+            protocol's circuit breaker: it can pause on confirmed exploit — and it is
+            structurally incapable of doing anything else.</p>
+        </div>
+
+        <p style="margin-top:22px">Source and contracts:
+          <a href="https://github.com/Temmygabriel/INTERLOCK" target="_blank" rel="noopener">github.com/Temmygabriel/INTERLOCK</a></p>
+      </div>
+    </section>
   </main>
 
+  <footer class="sitefoot">
+    <div class="wrap">
+      <p class="mono">INTERLOCK · an autonomous safety breaker on <a href="https://genlayer.com" target="_blank" rel="noopener">GenLayer</a> · live demo on studionet · run, don't walk — audit your borrows.</p>
+    </div>
+  </footer>
+
   <noscript>
-    <div style="color:#E7E4DC;background:#26282B;padding:2rem;text-align:center;font-family:monospace">INTERLOCK panel requires JavaScript to read the live GenLayer contracts.</div>
+    <div style="padding:2rem;text-align:center;font-family:monospace;color:#1D3557">
+      Interlock requires JavaScript to read the live GenLayer contracts.
+    </div>
   </noscript>
 
   <script type="module" src="./app.js"></script>

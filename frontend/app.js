@@ -43,6 +43,53 @@ function clip(s, n = 160) {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
+// ------------------------------------------------------------------ plain
+// v2 copy rule (spec §3.3): never show a raw "audit #N" to a visitor. Every
+// on-chain audit entry is translated into a real date and a plain sentence
+// built from fields the contract already returns (op/amount/coverage/time).
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function humanTime(v) {
+  if (v == null) return "—";
+  const s = big(v).replace("T", " ");
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!m) return (s.length > 19 ? s.slice(0, 19) : s);
+  const [, y, mo, d, hh, mi] = m;
+  return `${MONTHS[+mo - 1]} ${+d}, ${y} · ${hh}:${mi}`;
+}
+function opVerb(e) {
+  const op = String(e.op ?? "");
+  const amt = e.amount != null ? num(e.amount) : 0;
+  switch (op) {
+    case "deposit": return "someone deposited " + amt + " GEN as collateral";
+    case "borrow": return "someone borrowed " + amt + " GEN";
+    case "withdraw": return "someone withdrew " + amt + " GEN";
+    case "guardian_pause": return "the breaker paused the vault";
+    case "governance_resume": return "governance resumed the vault";
+    case "guardian_update": return "governance changed the vault's guardian";
+    case "set_guardian": return "governance changed the vault's guardian";
+    default: {
+      // last resort: humanize a snake_case op rather than show raw bytes
+      const pretty = op.replace(/_/g, " ");
+      return pretty + (amt ? " of " + amt + " GEN" : "");
+    }
+  }
+}
+function coverageLine(e) {
+  const c = e.coverage != null ? num(e.coverage) : null;
+  if (c == null) return "";
+  return c >= 100
+    ? "The vault is " + c + "% backed — healthy."
+    : "The vault is now only " + c + "% backed. This looks risky.";
+}
+function describeAudit(e) {
+  return {
+    when: humanTime(e.time),
+    head: humanTime(e.time) + " — " + opVerb(e),
+    tail: coverageLine(e),
+    risky: e.coverage != null && num(e.coverage) < 100,
+  };
+}
+
 // ---------------------------------------------------------------- panel state
 
 const housing = $("housing");
@@ -132,16 +179,39 @@ function rebuildAuditSelect(preserve) {
   const alen = num(vp.audit_len);
   const cur = preserve != null ? preserve : sel.value;
   sel.innerHTML = "";
+  $("fIndexOf").textContent = "of " + alen + " on-chain entries";
+  sel.disabled = alen === 0;
+  if (!alen) { $("evidencePreview").hidden = true; return; }
+  // render plain-language options: read every entry, describe it in a sentence.
+  // (The demo vault keeps a short log; parallel reads are fine here.)
   for (let i = 0; i < alen; i++) {
     const o = document.createElement("option");
     o.value = String(i);
-    o.textContent = "audit #" + i;
+    o.textContent = "loading entry " + (i + 1) + "…";
     sel.appendChild(o);
   }
-  $("fIndexOf").textContent = "of " + alen + " on-chain entries";
-  sel.disabled = alen === 0;
-  if (alen && cur != null && Number(cur) < alen) sel.value = String(cur);
-  if (alen) refreshEvidence();
+  Promise.all(
+    Array.from({ length: alen }, (_, i) =>
+      read(VAULT, "get_audit_entry", [i]).catch(() => null))
+  ).then((entries) => {
+    let riskyDefault = null;
+    entries.forEach((e, i) => {
+      const o = sel.querySelector('option[value="' + i + '"]');
+      if (!o) return;
+      if (!e || e.found === false) { o.textContent = "entry " + (i + 1) + " — unreadable"; return; }
+      const d = describeAudit(e);
+      o.textContent = clip(d.head + (d.tail ? " · " + d.tail : ""), 150);
+      if (d.risky) riskyDefault = i; // default to the newest risky-looking entry
+    });
+    if (cur != null && Number(cur) < alen) {
+      sel.value = String(cur);
+    } else if (riskyDefault != null) {
+      sel.value = String(riskyDefault);
+    } else {
+      sel.value = String(alen - 1); // newest
+    }
+    refreshEvidence();
+  });
 }
 
 async function refreshEvidence() {
@@ -151,23 +221,13 @@ async function refreshEvidence() {
     const box = $("evidencePreview");
     if (!e || e.found === false) { box.hidden = true; return; }
     box.hidden = false;
+    const d = describeAudit(e);
+    const risky = d.risky;
     const rows = $("evRows");
-    rows.innerHTML = "";
-    const order = ["seq", "op", "amount", "collateral", "debt", "coverage", "time"];
-    const show = (k, raw, ok) => {
-      const div = document.createElement("div");
-      div.className = "ev-row";
-      const cls = ok ? "v ok" : ok === false ? "v bad" : "v";
-      const val = ok === true ? "✓ verified" : ok === false ? raw : big(raw);
-      div.innerHTML = '<span class="k">' + k + "</span>" +
-        '<span class="' + cls + '">' + (k === "time" ? fmtTime(val) : val) + "</span>";
-      rows.appendChild(div);
-    };
-    for (const k of order) {
-      if (e[k] === undefined) continue;
-      // coverage >=100 is the health signal consensus cares about
-      show(k, e[k], k === "coverage" ? num(e.coverage) >= 100 : undefined);
-    }
+    rows.innerHTML =
+      '<strong style="color:' + (risky ? "var(--danger)" : "var(--ink)") + '">' + d.head + "</strong>" +
+      (d.tail ? "<br>" + d.tail : "") +
+      '<br><span class="ro-sub">entry ' + num(e.seq ?? idx) + " on the vault audit log · coverage " + num(e.coverage) + "%</span>";
   } catch { $("evidencePreview").hidden = true; }
 }
 
@@ -335,28 +395,54 @@ async function submitReport() {
 // ---------------------------------------------------------------- identity
 
 function activeSignerLabel() {
-  const mmOn = signerMode === "metamask" && mmSigner;
-  if (mmOn) return ID.shortAddr(mmAccount);
+  if (signerMode === "metamask" && mmSigner) return ID.shortAddr(mmAccount);
   const id = ID.loadIdentity();
   return id ? ID.shortAddr(id.address) : "—";
+}
+
+// v2 §3.4 — the honesty notice is dynamic, never a static claim.
+function signerSentence() {
+  if (signerMode === "metamask" && mmSigner) {
+    return "Every report is signed by whichever identity is active above — right now, MetaMask (" +
+      ID.shortAddr(mmAccount) + "). Each report opens a MetaMask confirm for the report bond — 0 network fee (studionet is gasless).";
+  }
+  const id = ID.loadIdentity();
+  if (id) {
+    return "Every report is signed by whichever identity is active above — right now, your browser identity (" +
+      ID.shortAddr(id.address) + "). It never leaves this browser.";
+  }
+  return "Every report is signed by whichever identity is active above. Create a browser identity below, or connect MetaMask.";
+}
+
+// Both signer rows are always visible (MetaMask is not gated); the MetaMask row
+// only enables once a wallet account is connected.
+function syncSignerUI() {
+  const onMM = signerMode === "metamask" && !!mmSigner;
+  $("selBrowser").checked = !onMM;
+  $("selMetamask").checked = onMM;
+  $("selMetamask").disabled = !mmSigner;
+  $("signerLine").textContent = signerSentence();
 }
 
 function renderIdentity() {
   const id = ID.loadIdentity();
   const has = !!id;
-  $("idChip").classList.toggle("has-id", has);
-  $("idDot").classList.toggle("has-id", has);
+  const ready = has || !!mmSigner;
+  $("idChip").classList.toggle("has-id", ready);
+  $("idDot").classList.toggle("has-id", ready);
   $("popDot").classList.toggle("has-id", has);
-  $("idAddr").textContent = has ? ID.shortAddr(id.address) : "no identity";
-  $("popAddr").textContent = has ? ID.checksum(id.address) : "—";
+  const active = activeSignerLabel();
+  $("idAddr").textContent = active !== "—" ? active : (has ? ID.shortAddr(id.address) : "no signer");
+  $("popAddr").textContent = has ? ID.checksum(id.address) : (mmSigner ? ID.checksum(mmAccount) : "—");
   $("popKey").textContent = has ? "••••" + id.key.slice(-4) : "—";
   $("revealKey").hidden = !has;
   $("copyKey").hidden = !has;
-  $("copyAddr").hidden = !has;
+  $("copyAddr").hidden = !has && !mmSigner;
   $("idCreate").hidden = has;
   $("idRegen").hidden = !has;
   $("idClear").hidden = !has;
-  $("fSigner").textContent = activeSignerLabel();
+  $("fSigner").textContent = active;
+  syncSignerUI();
   const canSign = has || (mmSigner && signerMode === "metamask");
   $("reportBtn").disabled = !canSign || inFlight || (vp && vp.paused === true);
 }
@@ -432,38 +518,49 @@ function wireIdentity() {
     }
   });
 
-  // MetaMask — OPTIONAL real signer. Connect → ensure studionet is added &
-  // selected → wrap as a signer → let the user pick who signs reports
-  // (browser identity stays the default; MetaMask only signs if chosen).
+  // MetaMask — optional but NOT gated: both signer rows are always visible in
+  // the dropdown (§3.4). The MetaMask row enables once an account is connected.
+  // studionet (chain 61999 = 0xF22F, gasless) is added + selected first so the
+  // wallet shows a zero network fee instead of re-estimating / re-typing the tx
+  // (the report is sent as an explicit legacy type-0x0 request — see tx.js).
   const mm = typeof window.ethereum !== "undefined" && window.ethereum;
-  const mmAddr = $("mmAddr"), mmNote = $("mmNote"), mmBtn = $("mmConnect");
-  const selBrowser = $("selBrowser"), selMetamask = $("selMetamask");
+  const mmAddrEl = $("mmAddr"), mmNote = $("mmNote"), mmBtn = $("mmConnect");
+  const selMetamask = $("selMetamask");
 
   function updateMMNote() {
-    if (!mmSigner) {
-      mmNote.textContent = "Connected — reports are still signed by your browser identity. Pick META below to sign with MetaMask instead.";
-      return;
-    }
-    if (signerMode === "metamask") {
-      mmNote.textContent = "Signing reports with MetaMask. Each report opens a MetaMask confirm for the report bond — 0 network fee, studionet is gasless.";
+    if (!mm) {
+      mmNote.textContent = "No MetaMask wallet detected — optional. Your browser identity signs every report.";
+    } else if (!mmSigner) {
+      mmNote.textContent = "Connect to enable MetaMask signing. studionet (chain 61999) is added automatically — it is gasless, so a confirm shows a 0 network fee.";
+    } else if (signerMode === "metamask") {
+      mmNote.textContent = "Connected — reports are signed with MetaMask. Each report opens a MetaMask confirm for the report bond at 0 network fee.";
     } else {
-      mmNote.textContent = "Connected. Switch to META to sign reports with this account.";
+      mmNote.textContent = "Connected. Pick the MetaMask row above to sign reports with this account.";
     }
   }
+
   function setSignerMode(m) {
-    if (m === "metamask" && !mmSigner) return;
-    signerMode = m;
-    selBrowser.checked = m === "browser";
-    selMetamask.checked = m === "metamask";
+    if (m === "metamask") {
+      if (!mmSigner) { // honest: a disconnected wallet cannot sign
+        selMetamask.checked = false;
+        $("selBrowser").checked = true;
+        mmNote.textContent = "Connect MetaMask first, then pick it to sign.";
+        return;
+      }
+      signerMode = "metamask";
+    } else {
+      signerMode = "browser";
+    }
     renderIdentity();
     updateMMNote();
   }
-  selBrowser.addEventListener("change", () => { if (selBrowser.checked) setSignerMode("browser"); });
+  $("selBrowser").addEventListener("change", () => { if ($("selBrowser").checked) setSignerMode("browser"); });
   selMetamask.addEventListener("change", () => { if (selMetamask.checked) setSignerMode("metamask"); });
 
   if (!mm) {
     mmBtn.disabled = true;
-    mmNote.textContent = "No MetaMask wallet detected. Optional — your browser identity signs every report.";
+    selMetamask.disabled = true;
+    updateMMNote();
     return;
   }
   mmBtn.addEventListener("click", async () => {
@@ -472,16 +569,15 @@ function wireIdentity() {
       const accs = await mm.request({ method: "eth_requestAccounts" });
       const a = accs?.[0];
       if (!a) throw new Error("no account returned");
-      // studionet (chainId 61999 = 0xF22F, gasless) must be added + selected so
-      // MetaMask can show the correct (zero) fee instead of re-typing the tx.
-      await ensureStudionet(mm);
+      await ensureStudionet(mm); // wallet now knows studionet → 0 fee, legacy 0x0
       mmAccount = String(a).toLowerCase();
       mmSigner = ID.makeMetaMaskSigner(mm, mmAccount);
-      mmAddr.textContent = ID.shortAddr(mmAccount) + "  (" + ID.checksum(mmAccount).slice(0, 10) + "…)";
-      mmAddr.classList.add("on");
+      mmAddrEl.textContent = ID.shortAddr(mmAccount) + " · " + ID.checksum(mmAccount).slice(0, 8) + "…";
+      mmAddrEl.classList.add("on");
       mmBtn.textContent = "CONNECTED";
-      $("signMode").hidden = false;
-      setSignerMode(signerMode); // re-render with the signer now available
+      mmBtn.disabled = true;
+      renderIdentity(); // enables (and can auto-select) the MetaMask row
+      updateMMNote();
     } catch (e) {
       mmBtn.disabled = false;
       mmNote.textContent = "Connection declined: " + (e?.message ?? e).slice(0, 80);
@@ -554,6 +650,21 @@ async function refreshEverything() {
 
 $("fIndex").addEventListener("change", refreshEvidence);
 $("reportBtn").addEventListener("click", submitReport);
+
+// Path A — "Watch it happen". Becomes the automatic borrow → report → trip loop
+// once the exploit-lab pair (CONFIG.lab, task #17) is deployed and #18 wires it.
+// Until then, stay honest: the live vault only holds healthy entries, so a watch
+// round demonstrates the breaker REFUSING to trip — which is itself proof it
+// cannot be tripped on demand.
+async function watchDemo() {
+  const s = $("watchStatus");
+  if (CONFIG.lab) {
+    s.textContent = "Exploit-lab pair detected — the auto borrow → report → trip loop is wired from here (task #18). The manual path below is live right now.";
+    return;
+  }
+  s.textContent = "The exploit-lab vault (a pair where a real borrow drops coverage under 100%) is not deployed yet, so a live round here is a report on the healthy vault — real validator consensus, and it will REFUSE to trip. Run one yourself below: pick the newest entry and press Report.";
+}
+$("watchRun").addEventListener("click", watchDemo);
 
 (async function init() {
   wireIdentity();
