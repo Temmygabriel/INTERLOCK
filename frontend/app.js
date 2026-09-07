@@ -19,8 +19,17 @@ import { CONFIG } from "./config.js";
 // INTERLOCK_ADDRESS / VAULT_ADDRESS; the committed config.js defaults are the
 // on-chain DEPLOY CARD pair (see PROGRESS.md).
 // ----------------------------------------------------------------------------
-const INTERLOCK = CONFIG.interlock;
-const VAULT = CONFIG.vault;
+// Which pair is the LIVE instrument? When a lab pair is configured (CONFIG.lab —
+// set from env LAB_INTERLOCK_ADDRESS/LAB_VAULT_ADDRESS at build, or in the
+// committed config.js), the instrument is the exploit-lab vault the demo owns and
+// can TRIP. Without a lab the instrument is the deploy-card pair — the stable,
+// always-running proof that the breaker refuses to trip on demand. Both paths
+// below (Watch / Try) drive whichever pair is live, so a real trip is possible
+// exactly when a lab is present.
+const LAB = CONFIG.lab && CONFIG.lab.interlock && CONFIG.lab.vault ? CONFIG.lab : null;
+const INTERLOCK = LAB ? LAB.interlock : CONFIG.interlock;
+const VAULT = LAB ? LAB.vault : CONFIG.vault;
+const PAIR_NAME = LAB ? "exploit-lab pair (demo vault)" : "deploy-card pair";
 
 const $ = (id) => document.getElementById(id);
 const canon = (a) => String(a).toLowerCase();
@@ -98,6 +107,7 @@ const setState = (s) => housing.dataset.state = s;
 let st = null;        // interlock.status
 let vp = null;        // vault params
 let inFlight = false; // a report is being judged
+let watchBusy = false; // the "watch it happen" loop is mid-run (borrow → report → trip)
 let lastAuditLen = null;
 let lastIncCount = null;
 let mmAccount = null;         // connected MetaMask address — DISPLAY ONLY (never signs)
@@ -107,6 +117,22 @@ function renderStateWord(word, note, noteBad = false) {
   const n = $("statusNote");
   n.textContent = note;
   n.classList.toggle("bad", noteBad);
+}
+
+// Single source of truth for which actions are enabled: a report (instrument or
+// the Try card) needs the browser identity, nothing in flight, and a live vault;
+// the Watch loop additionally needs a lab pair configured (else it falls back to
+// an honest message) and the vault not already paused.
+function syncButtons() {
+  const id = ID.loadIdentity();
+  const paused = !!(vp && vp.paused === true);
+  const canReport = !!id && !inFlight && !paused;
+  const reportBtn = $("reportBtn");
+  if (reportBtn) reportBtn.disabled = !canReport;
+  const tryBtn = $("tryRun");
+  if (tryBtn) tryBtn.disabled = !canReport;
+  const watchBtn = $("watchRun");
+  if (watchBtn) watchBtn.disabled = inFlight || watchBusy || paused;
 }
 
 // ---------------------------------------------------------------- readouts
@@ -174,19 +200,26 @@ function renderIncidents() {
 
 function rebuildAuditSelect(preserve) {
   const sel = $("fIndex");
+  const trySel = $("tryIndex");
   const alen = num(vp.audit_len);
   const cur = preserve != null ? preserve : sel.value;
   sel.innerHTML = "";
   $("fIndexOf").textContent = "of " + alen + " on-chain entries";
   sel.disabled = alen === 0;
-  if (!alen) { $("evidencePreview").hidden = true; return; }
+  if (trySel) { trySel.innerHTML = ""; trySel.disabled = alen === 0; }
+  if (!alen) { $("evidencePreview").hidden = true; syncButtons(); return; }
   // render plain-language options: read every entry, describe it in a sentence.
-  // (The demo vault keeps a short log; parallel reads are fine here.)
-  for (let i = 0; i < alen; i++) {
+  // (The demo vault keeps a short log; parallel reads are fine here.) The
+  // instrument dropdown and the Try-card dropdown always show the same entries.
+  function addOption(select, i) {
     const o = document.createElement("option");
     o.value = String(i);
     o.textContent = "loading entry " + (i + 1) + "…";
-    sel.appendChild(o);
+    select.appendChild(o);
+  }
+  for (let i = 0; i < alen; i++) {
+    addOption(sel, i);
+    if (trySel) addOption(trySel, i);
   }
   Promise.all(
     Array.from({ length: alen }, (_, i) =>
@@ -194,11 +227,12 @@ function rebuildAuditSelect(preserve) {
   ).then((entries) => {
     let riskyDefault = null;
     entries.forEach((e, i) => {
-      const o = sel.querySelector('option[value="' + i + '"]');
-      if (!o) return;
-      if (!e || e.found === false) { o.textContent = "entry " + (i + 1) + " — unreadable"; return; }
+      if (!e || e.found === false) return; // leave "unreadable" placeholder on a failed read
       const d = describeAudit(e);
-      o.textContent = clip(d.head + (d.tail ? " · " + d.tail : ""), 150);
+      const label = clip(d.head + (d.tail ? " · " + d.tail : ""), 150);
+      const o = sel.querySelector('option[value="' + i + '"]');
+      if (o) o.textContent = label;
+      if (trySel) { const t = trySel.querySelector('option[value="' + i + '"]'); if (t) t.textContent = label; }
       if (d.risky) riskyDefault = i; // default to the newest risky-looking entry
     });
     if (cur != null && Number(cur) < alen) {
@@ -208,6 +242,8 @@ function rebuildAuditSelect(preserve) {
     } else {
       sel.value = String(alen - 1); // newest
     }
+    if (trySel) trySel.value = String(riskyDefault != null ? riskyDefault : Math.max(0, alen - 1));
+    syncButtons();
     refreshEvidence();
   });
 }
@@ -278,17 +314,18 @@ function setPhase(el, state, t) {
   if (t != null) txt.textContent = t;
 }
 
-async function submitReport() {
-  if (inFlight) return;
+async function submitReport(idxParam) {
+  if (inFlight) return null;
   let id = ID.loadIdentity();
   if (!id) { ID.createIdentity(); renderIdentity(); id = ID.loadIdentity(); }
   // The browser identity is the sole report signer (MetaMask is display-only).
-  const idx = Number($("fIndex").value ?? 0);
+  // idxParam is the audit entry to report (the Try card passes its own choice);
+  // when omitted, the instrument dropdown (#fIndex) is used.
+  const idx = idxParam != null ? Number(idxParam) : Number($("fIndex").value ?? 0);
   const bond = BigInt(num(st.min_bond));
 
   inFlight = true;
-  const submitBtn = $("reportBtn");
-  submitBtn.disabled = true;
+  syncButtons();
   $("reportMsg").textContent = "";
   $("verdict").hidden = true;
   setState("checking");
@@ -329,9 +366,9 @@ async function submitReport() {
   } catch (e) {
     setPhase(p2, "", "failed");
     inFlight = false;
+    syncButtons();
     verdictFail("broadcast failed: " + (e?.message ?? e));
-    submitBtn.disabled = false;
-    return;
+    return "failed";
   }
 
   // 3 · wait for the report to land (report_count increments) or vault to pause
@@ -355,10 +392,10 @@ async function submitReport() {
   }
   if (!finished) {
     inFlight = false;
+    syncButtons();
     setPhase(p3, "", "timeout");
     verdictFail("no verdict after " + Math.round(judgeTimeoutMs / 1000) + "s — the round may still finalize; the readouts above are live.");
-    submitBtn.disabled = false;
-    return;
+    return "failed";
   }
 
   // resolve — find the incident OUR report produced (match reporter address)
@@ -377,18 +414,22 @@ async function submitReport() {
   if (!ourInc) { ourInc = { kind: finished.vnow.paused ? "TRIPPED" : "FALSE_REPORT_REJECTED", op_index: idx, effect: "", reason: "", time: st.last_check_time }; }
 
   inFlight = false;
+  let outcome;
   if (ourInc.kind === "TRIPPED") {
+    outcome = "tripped";
     verdictTrip(ourInc);
     const rb = await read(INTERLOCK, "refundable_of", [canon(reporter)]).catch(() => 0n);
     $("reportMsg").textContent = "Honest report — your bond (" + num(st.min_bond) + " GEN) is escrowed and refundable (" + big(rb) + " escrowed).";
     $("reportMsg").className = "report-msg good";
   } else {
+    outcome = "rejected";
     verdictReject(ourInc);
     $("reportMsg").textContent = "Bond forfeited to the vault's resilience fund — no refund path exists. This is proof the breaker cannot be tripped on demand.";
     $("reportMsg").className = "report-msg";
   }
-  submitBtn.disabled = false;
+  syncButtons();
   await refreshEverything();
+  return outcome;
 }
 
 // ---------------------------------------------------------------- identity
@@ -436,8 +477,7 @@ function renderIdentity() {
   $("idClear").hidden = !has;
   $("fSigner").textContent = active;
   syncSignerUI();
-  const canSign = has; // only the browser identity can sign
-  $("reportBtn").disabled = !canSign || inFlight || (vp && vp.paused === true);
+  syncButtons(); // report/try/watch enablement (browser identity is the only signer)
 }
 
 async function copyText(s) {
@@ -568,7 +608,7 @@ async function tick() {
     st = s; vp = v;
     const armed = canon(v.guardian) === canon(INTERLOCK);
     applyReadouts(armed);
-    $("netline").textContent = "studionet · chain 61999 · interlock " + INTERLOCK + " · vault " + VAULT;
+    $("netline").textContent = "studionet · chain 61999 · " + PAIR_NAME + " · interlock " + INTERLOCK + " · vault " + VAULT;
 
     if (inFlight) {
       // during judgment only the numbers refresh; the resolver drives the state
@@ -582,6 +622,7 @@ async function tick() {
 
     if (v.paused === true || s.tripped === true) {
       setState("tripped");
+      syncButtons(); // paused — nothing more to report until governance resumes
       renderStateWord("TRIPPED",
         "Exploit confirmed by validator consensus · vault paused · resume is governance-only");
       const last = await read(INTERLOCK, "get_incident", [num(s.incident_count) - 1]).catch(() => null);
@@ -620,20 +661,110 @@ async function refreshEverything() {
 }
 
 $("fIndex").addEventListener("change", refreshEvidence);
-$("reportBtn").addEventListener("click", submitReport);
+$("reportBtn").addEventListener("click", () => submitReport());
 
-// Path A — "Watch it happen". Becomes the automatic borrow → report → trip loop
-// once the exploit-lab pair (CONFIG.lab, task #17) is deployed and #18 wires it.
-// Until then, stay honest: the live vault only holds healthy entries, so a watch
-// round demonstrates the breaker REFUSING to trip — which is itself proof it
-// cannot be tripped on demand.
+// Path B — "Try it yourself". The Try card's own dropdown + report button drive
+// the exact same real machinery as the instrument form; the phases and verdict
+// render on the instrument (scrolled into view) so both paths stay visibly the
+// same product underneath.
+$("tryRun").addEventListener("click", async () => {
+  const st = $("tryStatus");
+  const sel = $("tryIndex");
+  if (!sel || sel.disabled) return;
+  const idx = Number(sel.value);
+  if (inFlight || watchBusy || !ID.loadIdentity() || (vp && vp.paused === true) || Number.isNaN(idx)) return;
+  st.textContent = "Reporting entry " + (idx + 1) + " — live phases appear on the instrument below…";
+  $("fIndex").value = String(idx); // keep the pinned-read preview aligned
+  refreshEvidence();
+  $("housing").scrollIntoView({ behavior: "smooth", block: "center" });
+  const out = await submitReport(idx);
+  if (out === "tripped") st.textContent = "✓ EXPLOIT CONFIRMED — vault paused. Validator consensus just tripped the breaker.";
+  else if (out === "rejected") st.textContent = "Ruled healthy — rejected, bond forfeited. It refuses to trip on demand.";
+  else if (out === "failed") st.textContent = "The report did not settle cleanly — see the verdict on the instrument.";
+  else st.textContent = "Nothing to report right now — check the identity chip and vault state.";
+});
+
+// Path A — "Watch it happen". With an exploit-lab pair configured (CONFIG.lab)
+// one click pushes a REAL risky borrow into the demo vault (a transaction signed
+// by the browser identity), reports the new entry, and shows the breaker trip on
+// real validator consensus — no further clicks, matching the card's promise.
+// Without a lab it stays honest: there is nothing risky on-chain to trip, so it
+// points you at the live healthy vault instead.
 async function watchDemo() {
   const s = $("watchStatus");
-  if (CONFIG.lab) {
-    s.textContent = "Exploit-lab pair detected — the auto borrow → report → trip loop is wired from here (task #18). The manual path below is live right now.";
+  if (watchBusy || inFlight) return;
+  if (!LAB) {
+    s.textContent = "No exploit-lab vault is configured, so a live round here would only report a healthy entry — real consensus, and it would REFUSE to trip. Drive a report yourself in the Try card below.";
     return;
   }
-  s.textContent = "The exploit-lab vault (a pair where a real borrow drops coverage under 100%) is not deployed yet, so a live round here is a report on the healthy vault — real validator consensus, and it will REFUSE to trip. Run one yourself below: pick the newest entry and press Report.";
+  let id = ID.loadIdentity();
+  if (!id) { ID.createIdentity(); renderIdentity(); id = ID.loadIdentity(); }
+  if (vp && vp.paused === true) {
+    s.textContent = "The demo vault is already paused by a confirmed trip. Redeploy the exploit-lab pair for another run.";
+    return;
+  }
+
+  watchBusy = true;
+  syncButtons();
+  s.className = "demo-status";
+  try {
+    let p = (vp && vp.audit_len != null && vp.paused === false) ? vp : await read(VAULT, "params").catch(() => null);
+    if (!p || p.paused === true) { s.textContent = "The demo vault is not in a reportable state — refresh and try again."; return; }
+
+    let idx;
+    if (num(p.coverage) >= 100) {
+      // 1 · push a borrow large enough to under-collateralize the vault. borrow is
+      // permissionless on the demo vault (that absence of a health check IS the
+      // exploit), and studionet settles writes from a 0-balance key.
+      const len0 = num(p.audit_len);
+      const amount = num(p.collateral); // new debt = debt + collateral > collateral ⇒ coverage < 100%
+      s.textContent = "Step 1/3 — pushing a risky " + amount + " GEN borrow into the demo vault (real transaction, signed by your browser identity)…";
+      let tx;
+      try {
+        tx = await sendWrite(ID.signer(), VAULT, "borrow", [amount], { value: 0 });
+      } catch (e) {
+        s.textContent = "The risky borrow failed to broadcast: " + clip(e?.message ?? e, 90);
+        return;
+      }
+      s.textContent = "Step 1/3 — borrow broadcast (tx " + ID.shortAddr(tx) + "). Waiting for it to land on-chain…";
+      const deadline = Date.now() + judgeTimeoutMs;
+      idx = null;
+      while (Date.now() < deadline) {
+        await sleep(pollMs);
+        try {
+          const pn = await read(VAULT, "params");
+          vp = pn;
+          applyReadouts(canon(pn.guardian) === canon(INTERLOCK));
+          if (num(pn.audit_len) > len0 && num(pn.coverage) < 100) { idx = num(pn.audit_len) - 1; break; }
+        } catch { /* studionet drops connections — retry */ }
+      }
+      if (idx == null) {
+        s.textContent = "The borrow never settled on-chain (timeout). The breaker is still running — nothing tripped.";
+        return;
+      }
+      s.textContent = "Step 2/3 — the borrow landed: the demo vault is now only " + num(vp.coverage) + "% backed. Reporting it to the breaker…";
+    } else {
+      // already under 100% (left risky from an earlier run) — report the newest entry
+      idx = num(p.audit_len) - 1;
+      s.textContent = "Step 2/3 — the demo vault is already under 100% backed (entry " + (idx + 1) + "). Reporting it to the breaker…";
+    }
+
+    // 2 · report through the same real machinery (renders the live checklist and
+    // verdict on the instrument). Keep the pinned-read preview aligned.
+    $("fIndex").value = String(idx);
+    refreshEvidence();
+    const out = await submitReport(idx);
+    if (out === "tripped") {
+      s.textContent = "✓ TRIPPED. Validator consensus confirmed the under-collateralized borrow and paused the demo vault. The lab is spent — redeploy for the next run.";
+    } else if (out === "rejected") {
+      s.textContent = "The breaker ruled this borrow healthy and refused to trip (bond forfeited). The demo vault is still live.";
+    } else {
+      s.textContent = "The report did not settle cleanly — see the verdict on the instrument.";
+    }
+  } finally {
+    watchBusy = false;
+    syncButtons();
+  }
 }
 $("watchRun").addEventListener("click", watchDemo);
 

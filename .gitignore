@@ -19,6 +19,9 @@ genlayer-key*.json
 # Local-only reference docs — NEVER pushed (stay on this machine)
 aegis-wallet-integration.md
 
+# Lab-pair deploy card (ephemeral addresses; redeploy per demo) — never pushed
+lab-card.json
+
 # Node (if any frontend tooling appears)
 node_modules/
 # build.mjs output (Vercel serves this; env-injected config)

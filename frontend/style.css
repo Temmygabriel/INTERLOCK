@@ -210,6 +210,10 @@ button.mini.danger-ghost:hover { background: var(--danger); color: #fff; }
 }
 .demo-note { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
 .demo-status { min-height: 34px; font-size: 13px; }
+/* try-it-yourself card controls (path B) */
+.try-ctrl { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; }
+.try-ctrl .btn { align-self: flex-start; }
+.try-ctrl select { min-height: 20px; }
 
 /* ───────────────────────────── live breaker instrument ───────────── */
 .instrument-shell { margin-top: 12px; }

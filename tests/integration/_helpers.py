@@ -65,11 +65,29 @@ def raw_addr(hex_addr: str) -> CalldataAddress:
     return CalldataAddress(bytes.fromhex(hex_addr[2:]))
 
 
+def _tx_hash(tx) -> str:
+    """Normalize whatever the SDK returns from a submit to a bare tx-hash
+    string. genlayer-py's return shape changed across versions: some return
+    only the hash hex, others return the full settled transaction *record*
+    (a dict carrying 'hash' plus consensus data). Polling APIs take a hash,
+    never a record — feeding a dict in makes the studionet ledger raise
+    ``psycopg2 can't adapt type 'dict'``. Accepting either shape keeps the
+    helpers version-proof.
+    """
+    if isinstance(tx, dict):
+        for key in ("hash", "transaction_hash", "txId"):
+            if tx.get(key):
+                return str(tx[key])
+        raise TypeError(f"cannot extract tx hash from record: {list(tx)[:8]}…")
+    return str(tx)
+
+
 def wait_status(client, tx, status, label: str) -> dict:
     """Wait a transaction to ``status``, retrying transport drops during the
     poll. Lookups are by tx hash, so a dropped poll can be re-run safely."""
+    tx_hash = _tx_hash(tx)
     def _wait():
-        return client.wait_for_transaction_receipt(tx, status=status)
+        return client.wait_for_transaction_receipt(tx_hash, status=status)
     return _retry(_wait, label)
 
 
@@ -90,7 +108,7 @@ def finalize(client, tx) -> dict:
     rec = wait_status(client, tx, TransactionStatus.FINALIZED, "finalize parent")
     assert tx_execution_succeeded(rec), "parent write did not execute cleanly"
     for child in _retry(
-        lambda: client.get_triggered_transaction_ids(tx), "triggered children"
+        lambda: client.get_triggered_transaction_ids(_tx_hash(tx)), "triggered children"
     ):
         child_rec = wait_status(client, child, TransactionStatus.FINALIZED, "finalize child")
         assert tx_execution_succeeded(child_rec), "emitted child did not execute cleanly"
@@ -115,7 +133,7 @@ def finalize_parent(client, tx) -> tuple:
     rec = wait_status(client, tx, TransactionStatus.FINALIZED, "finalize withdraw parent")
     assert tx_execution_succeeded(rec), "withdraw parent did not execute cleanly"
     children = _retry(
-        lambda: client.get_triggered_transaction_ids(tx), "triggered children"
+        lambda: client.get_triggered_transaction_ids(_tx_hash(tx)), "triggered children"
     )
     return rec, children
 

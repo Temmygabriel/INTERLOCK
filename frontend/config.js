@@ -20,9 +20,16 @@
 export const CONFIG = {
   interlock: "0x2fB65F934618a17320c288d684aaB97dC00Ac300",
   vault: "0xCCB1fa65e9A85023324ccaA7aa44959b5BA448a7",
-  // The dedicated exploit-lab pair (a vault Interlock's demo owner controls,
-  // where a real borrow pushes coverage < 100% so a live trip can be shown).
-  // null until it is deployed on studionet (see PROGRESS.md task #17). Env
-  // vars LAB_INTERLOCK_ADDRESS / LAB_VAULT_ADDRESS override at build time.
-  lab: null,
+  // The dedicated exploit-lab pair — a vault the demo owns, where a live borrow
+  // can push coverage under 100% and TRIP the breaker (the "Watch it happen"
+  // + "Try it yourself" paths). When `lab` is set the page's live instrument
+  // points at it; when null it falls back to the deploy-card pair above.
+  // This pair is deployed fresh per demo (see PROGRESS.md #17/#18); the card
+  // is written to repo-root `lab-card.json` (gitignored) by
+  // `tests/integration/test_lab_deploy.py`. Env vars LAB_INTERLOCK_ADDRESS /
+  // LAB_VAULT_ADDRESS override at build time (both-or-error in build.mjs).
+  lab: {
+    interlock: "0x970a345e99800D5eb9b49E3599396a0faC633FdC",
+    vault: "0x429Ada2BC4a6E240418ECE8b883CE7060C0ff15A",
+  },
 };

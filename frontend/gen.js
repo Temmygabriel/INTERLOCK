@@ -211,7 +211,8 @@ function callDataSim(method, args) {
 
 // ------------------------------------------------------------------- RPC
 
-/** Raw JSON-RPC POST to studionet. */
+/** Raw JSON-RPC POST to studionet. NO retry, no timeout override — callers in the
+ *  write path (nonce/gas/broadcast) must never be auto-retried. */
 export async function rpc(method, params) {
   const res = await fetch(RPC_URL, {
     method: "POST",
@@ -223,14 +224,49 @@ export async function rpc(method, params) {
   return j.result;
 }
 
-/** Read a view method: gen_call with an anonymous `from` (sim-variant envelope). */
+// studionet intermittently stalls one in ~6 reads (~10s, then "fetch failed");
+// an immediate retry always recovers (probed 2026-09-07). View reads are pure
+// gen_call sims — side-effect-free — so a bounded timeout + ONE retry is safe and
+// keeps the live panel from flashing a network-error frame every poll. Network /
+// transport failures retry; RPC-level errors (decode, method) throw immediately —
+// they are deterministic and would fail again.
+const NET_FAIL = /fetch failed|Failed to fetch|ECONNRESET|ENOTFOUND|ETIMEDOUT|aborted|AbortError|timeout|network/i;
+const READ_TIMEOUT_MS = 20_000;
+
+async function rpcReadOnce(method, params) {
+  const ctl = new AbortController();
+  const to = setTimeout(() => ctl.abort(), READ_TIMEOUT_MS);
+  try {
+    const res = await fetch(RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: ctl.signal,
+      body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+    });
+    const j = await res.json();
+    if (j.error) throw new Error(`${method}: ${j.error.message}`);
+    return j.result;
+  } finally {
+    clearTimeout(to);
+  }
+}
+
+/** Read a view method: gen_call with an anonymous `from` (sim-variant envelope).
+ *  One automatic retry on a transport-level failure (see rpcReadOnce); never
+ *  retries an RPC-level error, and never used by writes. */
 export async function read(contract, method, args, from = ANON_FROM) {
-  const result = await rpc("gen_call", [{
+  const params = [{
     type: "read", to: contract, from,
     data: callDataSim(method, args),
     transaction_hash_variant: "latest_nonfinal",
-  }]);
-  return glDecode(hexBytes(result));
+  }];
+  try {
+    return glDecode(hexBytes(await rpcReadOnce("gen_call", params)));
+  } catch (e) {
+    if (!NET_FAIL.test(String(e?.message ?? e))) throw e;
+    await new Promise((r) => setTimeout(r, 600));
+    return glDecode(hexBytes(await rpcReadOnce("gen_call", params)));
+  }
 }
 
 /** Small helper: contract *str-address* views return checksummed hex strings; a
