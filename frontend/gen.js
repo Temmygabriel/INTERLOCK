@@ -12,7 +12,8 @@
 //      call (writes, in tx.js).
 //
 // A write is therefore an ordinary EVM transaction `to` the consensus-main
-// contract — which is exactly what MetaMask (and ethers) can sign.
+// contract — signable by any EIP-155 key. The app signs with the browser
+// identity's ethers.Wallet (see identity.js); MetaMask is display-only.
 
 export const RPC_URL = "https://studio.genlayer.com/api";
 export const CHAIN_ID = 61999; // studionet (GenLayer Studio Network)

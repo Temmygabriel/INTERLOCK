@@ -10,7 +10,9 @@
 // where `calldata` is the RLP([glEncode({method,args}), 0x00]) blob from gen.js
 // and `value` carries any msg.value (e.g. a report bond). Because the envelope
 // is a standard EIP-1559 transaction, it can be signed by ethers (browser
-// identity) OR by MetaMask via eth_sendTransaction — see identity.js.
+// identity — see identity.js). MetaMask is intentionally display-only in this
+// app: a report carries a GEN bond and studionet has no faucet to fund a wallet,
+// so MetaMask is never asked to sign.
 //
 // Requires `globalThis.ethers` (ethers v6). The browser loads the UMD build
 // before this module; Node tests do `globalThis.ethers = await import('ethers')`.
@@ -57,9 +59,9 @@ async function baseFee() {
 }
 
 /**
- * Sign a GenLayer write with an ethers signer (Wallet or a MetaMask/jsonrpc
- * signer) and broadcast it. Returns the *GenLayer* transaction id (bytes32 hex)
- * once the outer EVM tx is mined, so the caller can watch it finalize.
+ * Sign a GenLayer write with the browser identity's ethers.Wallet and broadcast
+ * it. Returns the *GenLayer* transaction id (bytes32 hex) once the outer EVM tx
+ * is mined, so the caller can watch it finalize.
  *
  * IMPORTANT (studionet): the SDK signs a LEGACY type-0 EIP-155 tx here
  * (gasPrice 0, gas ~500000), NOT an EIP-1559 typed tx. The hosted network
@@ -92,51 +94,17 @@ export async function sendWrite(signer, recipient, method, args, opts = {}) {
   }
   tx.gasLimit = gas;
 
-  let evmHash;
-  if (typeof signer.signTransaction === "function") {
-    // ethers.Wallet (browser identity): sign offline, exactly as built above.
-    const raw = await signer.signTransaction(tx);
-    evmHash = await rpc("eth_sendRawTransaction", [raw]);
-  } else if (typeof signer.request === "function") {
-    // EIP-1193 provider (MetaMask): hand it an explicit LEGACY type-0 tx with
-    // every field hex-encoded (gasPrice 0, fixed gas). MetaMask's
-    // eth_sendTransaction re-estimates gas/fees itself and can silently re-type
-    // to EIP-1559 (type 2), which drops gasPrice and makes studionet's ledger
-    // refuse to credit the bond. Specifying type/gas/gasPrice leaves nothing to
-    // guess. Call ensureStudionet(provider) BEFORE this so MetaMask knows the
-    // network (else it cannot reason about the zero fee).
-    const params = metaMaskRequest(tx, from);
-    console.info("[interlock] MetaMask eth_sendTransaction params:", params);
-    evmHash = await signer.request({ method: "eth_sendTransaction", params: [params] });
-  } else {
-    throw new Error("unsupported signer: pass an ethers.Wallet (signTransaction) or an EIP-1193 wrapper (request)");
-  }
+  // ethers.Wallet (browser identity): sign offline, exactly as built above, then
+  // raw-broadcast. studionet settles bonded writes from any 0-balance key.
+  const raw = await signer.signTransaction(tx);
+  const evmHash = await rpc("eth_sendRawTransaction", [raw]);
 
   return waitConsensusTxId(evmHash);
 }
 
-/** Convert the internal ethers-style tx to the exact JSON-RPC object handed to
- * MetaMask for eth_sendTransaction. Legacy type-0, every value a hex string.
- * chainId is intentionally omitted — MetaMask signs for whatever network is
- * selected; ensureStudionet() switches it to studionet beforehand. */
-export function metaMaskRequest(tx, from) {
-  const hx = (v) => (typeof v === "bigint" ? "0x" + v.toString(16) : v);
-  return {
-    type: "0x0",
-    from,
-    to: tx.to,
-    data: tx.data,
-    nonce: hx(tx.nonce),
-    gas: hx(tx.gasLimit ?? tx.gas),
-    gasPrice: hx(tx.gasPrice ?? 0n),
-    value: hx(tx.value ?? 0n),
-  };
-}
-
-// studionet chain params for MetaMask (chainId 61999 decimal = 0xF22F). Gasless
-// + virtual value, so MetaMask must know the network before it can show the
-// (zero) fee on a report. blockExplorerUrls intentionally omitted — studionet
-// has no public explorer.
+// studionet chain params (chainId 61999 decimal = 0xF22F) used only to switch a
+// connected MetaMask to studionet for DISPLAY. Gasless + virtual value.
+// blockExplorerUrls intentionally omitted — studionet has no public explorer.
 export const STUDIONET_CHAIN = {
   chainId: "0xf22f",
   chainName: "GenLayer Studio Network (studionet)",
@@ -144,9 +112,9 @@ export const STUDIONET_CHAIN = {
   rpcUrls: ["https://studio.genlayer.com/api"],
 };
 
-/** Ensure the EIP-1193 provider has studionet added AND selected. Call before
- * the first eth_sendTransaction so MetaMask does not re-type or misquote gas.
- * 4902 = "chain not added yet" (MetaMask's wallet_switchEthereumChain error). */
+/** Ensure an EIP-1193 provider has studionet added AND selected. Used on the
+ * display-only MetaMask connect so the wallet shows the right network. 4902 =
+ * "chain not added yet" (MetaMask's wallet_switchEthereumChain error). */
 export async function ensureStudionet(provider) {
   try {
     await provider.request({

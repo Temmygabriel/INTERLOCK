@@ -38,26 +38,21 @@
             <span class="id-dot" id="popDot"></span>
             <span class="pop-title">Signer</span>
           </div>
-          <p class="pop-copy">Whoever is active below signs every report. The browser
-            identity is a keypair this browser generated and keeps <em>only here</em> —
-            it never leaves this machine. MetaMask is optional and signs through the
-            wallet instead.</p>
+          <p class="pop-copy">The browser identity below signs every report. It is a
+            keypair this browser generated and keeps <em>only here</em> — it never
+            leaves this machine. A MetaMask wallet may be connected for display only;
+            it is never asked to sign.</p>
 
-          <!-- active signer · both rows always visible (MetaMask not gated) -->
+          <!-- active signer · the browser identity is the sole report signer -->
           <div class="pop-sep"></div>
           <div class="pop-row" style="width:100%">
             <span class="pop-label" style="width:auto">Report signer</span>
           </div>
-          <div class="mm-radio" id="signMode">
+          <div class="mm-radio">
             <label class="sign-row">
               <input type="radio" name="signMode" id="selBrowser" checked />
               <span>Browser identity</span>
-              <small>auto-created · this browser</small>
-            </label>
-            <label class="sign-row">
-              <input type="radio" name="signMode" id="selMetamask" disabled />
-              <span>MetaMask</span>
-              <small id="mmAddr" class="mm-addr">not connected</small>
+              <small>auto-created · this browser · signs every report</small>
             </label>
             <p class="signer-honesty" id="signerLine"></p>
           </div>
@@ -89,14 +84,16 @@
             </div>
           </div>
 
-          <!-- MetaMask connect -->
+          <!-- MetaMask · display only (never signs) -->
           <div class="pop-sep"></div>
           <div class="mm-row">
-            <span class="pop-label">MetaMask wallet</span>
+            <span class="pop-label">MetaMask</span>
+            <span class="mono mm-addr" id="mmAddr" style="flex:1 1 auto;text-align:right">not connected</span>
             <button class="mini" id="mmConnect" type="button">CONNECT</button>
           </div>
-          <p class="mm-note" id="mmNote">Connect to enable MetaMask signing. studionet
-            (chain 61999) is added automatically — it is gasless.</p>
+          <p class="mm-note" id="mmNote">Connect to show your wallet address (display only).
+            It never signs — reports are signed by the browser identity, and studionet
+            has no faucet to fund a wallet for the report bond.</p>
         </div>
       </div>
     </div>

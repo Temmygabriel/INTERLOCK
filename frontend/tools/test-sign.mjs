@@ -2,12 +2,12 @@
 //
 // Proves the browser-signing path end to end on live studionet:
 //   1. The JS wire codec decodes real reads identically to the Python SDK.
-//   2. A brand-new keypair (the kind MetaMask / a browser identity produce)
+//   2. A brand-new keypair (the kind a browser identity produce)
 //      builds the consensus-main addTransaction envelope, signs a standard
 //      EIP-155 tx, broadcasts via eth_sendRawTransaction, and a VALUE-BEARING
 //      write (a 7-unit report bond) EXECUTES through real validator consensus —
-//      i.e. the exact artifact a MetaMask signature would produce is accepted
-//      and acted on by the chain.
+//      i.e. the exact artifact the browser identity's EIP-155 signature produces
+//      is accepted and acted on by the chain.
 //
 // The live pair is the DEPLOY CARD pair (see PROGRESS.md). It reports audit
 // op_index 0 (a healthy guardian_update, coverage 142%) as if it were an
