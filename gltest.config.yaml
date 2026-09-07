@@ -8,5 +8,5 @@ networks:
     leader_only: false
 
 paths:
-  contracts: contracts/
+  contracts: intelligent-contracts/
   artifacts: artifacts/

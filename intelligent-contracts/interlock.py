@@ -1,4 +1,21 @@
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
+#
+# ============================================================================
+# interlock.py — Interlock, the AUTONOMOUS CIRCUIT BREAKER (the "guard").
+#
+# ROLE   This is the breaker itself. A protocol deploys one Interlock pointed at
+#        the contract it wants protected, then grants it the pause role. It never
+#        holds or moves funds: the ONLY outward action its rulebook can take is
+#        `apply_pause` on its one target — and only after GenLayer's validator
+#        consensus independently confirms an exploit in the reported audit entry.
+#        Its constitution (target, governance, min_bond, rules) is frozen at
+#        deploy time; no setter for it exists anywhere in this file.
+#
+# PARTNER  Protects ONE DemoVault (demo_vault.py). The two are deployed as a
+#          pair and armed via vault.set_guardian(interlock). Multiple on-chain
+#          instances (the deploy-card pair + the exploit-lab pair) are just
+#          these same two files deployed again — see ./README.md.
+# ============================================================================
 
 from genlayer import *
 

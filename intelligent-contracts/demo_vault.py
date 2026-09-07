@@ -1,4 +1,18 @@
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
+#
+# ============================================================================
+# demo_vault.py — DemoVault, the EXPLOITABLE LENDING TARGET (the "victim").
+#
+# ROLE   A deliberately small, legible lending pool that Interlock protects.
+#        Every state-changing operation appends one immutable audit entry — the
+#        pinned on-chain evidence Interlock asks consensus to judge. Its one
+#        deliberate flaw: `borrow` has NO health check, so a caller can push
+#        coverage under 100% — the exploit the demo reports and trips on.
+#        Governance (owner) may `resume`; the guardian (an Interlock instance)
+#        may `apply_pause`. Arming = the owner calls set_guardian(interlock).
+#
+# PARTNER  Guarded by ONE Interlock (interlock.py). See ./README.md.
+# ============================================================================
 
 from genlayer import *
 
