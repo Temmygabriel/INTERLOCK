@@ -75,6 +75,9 @@ a { color: var(--ink); }
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: 0 14px 40px -12px rgba(29, 53, 87, 0.28);
   padding: 16px; z-index: 60; font-size: 13px;
+  max-height: min(74vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .id-pop[hidden] { display: none; }
 .pop-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 600; color: var(--ink); }
