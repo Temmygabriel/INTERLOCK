@@ -28,15 +28,11 @@ export const CONFIG = {
   // is written to repo-root `lab-card.json` (gitignored) by
   // `tests/integration/test_lab_deploy.py`. Env vars LAB_INTERLOCK_ADDRESS /
   // LAB_VAULT_ADDRESS override at build time (both-or-error in build.mjs).
-  // lab: null — no live exploit-lab pair right now. The previous lab pair
-  // (0x970a… / 0x429A…) was spent by a real confirmed trip on 2026-09-07 17:36,
-  // and NEW studionet deploys are currently ERRORing (validators return an
-  // empty execution_result for this pinned runner — external to this repo), so
-  // no fresh pair can be deployed yet. Until that clears, the instrument falls
-  // back to the healthy deploy-card pair above, and the "Watch it happen" path
-  // shows its honest "nothing risky to trip" message.
-  // To re-arm a lab when studionet recovers:
-  //   PYTHONUTF8=1 python -m pytest tests/integration/test_lab_deploy.py -v -s
-  //   then paste the fresh pair here, or set the Vercel LAB_* env vars.
-  lab: null,
+  // FRESH pair deployed 2026-09-08 after the runner re-pin (#22): contracts now
+  // pin py-genlayer:1j12s63y… (v0.1.0) with a blank line after the Depends
+  // comment — the old 1jb45… pin is decommissioned on studionet.
+  lab: {
+    interlock: "0xC8bB5c481C85B151E34EC0c1529009f6B27E5E3E",
+    vault: "0xfD88a3A8F07Ed280Cb8C3cADfa9Ec43e7F221690",
+  },
 };
