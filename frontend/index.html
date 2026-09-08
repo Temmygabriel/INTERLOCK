@@ -117,6 +117,7 @@
             <span class="pill"><span class="x">✕</span> SELF-UNLOCK</span>
           </div>
           <p class="pill-caption">frozen at deployment · no setter exists for any of the above.</p>
+          <p class="pill-caption">Its only token flows are a reporter's own bond: escrowed while a report is judged, returned to that reporter on a true report, or locked forever on a false one. It never routes funds anywhere else and never touches the vault's collateral.</p>
           <div class="hero-cta">
             <a class="btn btn-primary" href="#watch">Watch it happen <span class="arr">→</span></a>
             <a class="btn btn-ghost" href="#try">Try it yourself <span class="arr">→</span></a>
@@ -187,7 +188,8 @@
             <div class="demo-body">
               <h3>Pick the entry you think is an exploit.</h3>
               <p>Every option is a real on-chain audit entry, in plain language. You
-                never type evidence — just an index. Interlock signs nothing else.</p>
+                never type evidence — just an index. That index and the bond are the
+                whole report.</p>
             </div>
             <div class="demo-note">Same real transaction underneath — you're driving it.</div>
             <div class="try-ctrl">
@@ -328,8 +330,9 @@
           <div class="step">
             <span class="step-no">03</span>
             <h3>Done</h3>
-            <p>Now consensus watches every operation. On a confirmed exploit the
-              breaker trips and your protocol pauses. Only your governance resumes it.</p>
+            <p>Now every operation is evidence. Anyone can post a bonded report
+              pinning one entry — on a confirmed exploit the breaker trips and your
+              protocol pauses, faster than any vote. Only your governance resumes it.</p>
           </div>
         </div>
       </div>
@@ -352,20 +355,25 @@
           <div class="card">
             <div class="tag">STEP A — DIRECT DEPLOY</div>
             <h3>Matching pause + guardian slot</h3>
-            <p>Deploy Interlock pointed straight at your contract:</p>
-            <code class="cmd">genvm deploy interlock.py \
-  --arg target_address=0x…your_vault… \
-  --arg governance=0x…your_owner…</code>
+            <p>Deploy Interlock pointed straight at your contract. Its constructor
+              takes <code>target_vault</code>, <code>governance</code> and
+              <code>min_bond</code> — all required, written once, no setter (the
+              demo pairs use <code>min_bond = 5</code>):</p>
+            <code class="cmd">genlayer deploy --contract interlock.py \
+  --rpc https://studio.genlayer.com/api \
+  --args 0x…your_vault… 0x…your_governance… 5</code>
           </div>
           <div class="card">
             <div class="tag hazard">STEP A′ — ADAPTER</div>
             <h3>Differently-shaped contract</h3>
             <p>Deploy a small adapter next to your contract that exposes one
               guardian pause, and point Interlock at the adapter. Same chain, no
-              bridge, no relay service:</p>
-            <code class="cmd">genvm deploy adapter.py \
-  --arg target_address=0x…your_vault… \
-  --arg pause_selector="pause(uint256)"</code>
+              bridge, no relay service. This third program is what this project is
+              building next — the snippet below is its planned shape, not yet in the
+              repo:</p>
+            <code class="cmd">genlayer deploy --contract adapter.py \
+  --rpc https://studio.genlayer.com/api \
+  --args 0x…your_vault… "pause(uint256)"</code>
           </div>
         </div>
 

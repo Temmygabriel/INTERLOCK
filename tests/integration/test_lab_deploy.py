@@ -39,8 +39,8 @@ from ._helpers import (
     write,
 )
 
-VAULT_CODE = (REPO / "contracts" / "demo_vault.py").read_text(encoding="utf-8")
-INTERLOCK_CODE = (REPO / "contracts" / "interlock.py").read_text(encoding="utf-8")
+VAULT_CODE = (REPO / "intelligent-contracts" / "demo_vault.py").read_text(encoding="utf-8")
+INTERLOCK_CODE = (REPO / "intelligent-contracts" / "interlock.py").read_text(encoding="utf-8")
 
 # seed ops (deterministic, no LLM round): 57 + 60 + 5 collateral, 40 + 5 debt
 SEED = [("deposit", 60), ("borrow", 5), ("deposit", 5)]

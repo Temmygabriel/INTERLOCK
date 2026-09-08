@@ -26,8 +26,8 @@ from ._helpers import (
     raw_addr,
 )
 
-VAULT_CODE = (REPO / "contracts" / "demo_vault.py").read_text(encoding="utf-8")
-INTERLOCK_CODE = (REPO / "contracts" / "interlock.py").read_text(encoding="utf-8")
+VAULT_CODE = (REPO / "intelligent-contracts" / "demo_vault.py").read_text(encoding="utf-8")
+INTERLOCK_CODE = (REPO / "intelligent-contracts" / "interlock.py").read_text(encoding="utf-8")
 
 
 @dataclass

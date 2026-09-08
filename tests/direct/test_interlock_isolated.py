@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-INTERLOCK = str(REPO / "contracts" / "interlock.py")
+INTERLOCK = str(REPO / "intelligent-contracts" / "interlock.py")
 MIN_BOND = 5
 
 
@@ -74,7 +74,7 @@ def test_no_constitution_setter_exists():
     """Structural guard-test: the rulebook fields are assigned exactly once (in the
     constructor) and no write method can mutate them. Grep the source rather than
     the ABI so this also fails if someone adds a setter later."""
-    src = (REPO / "contracts" / "interlock.py").read_text(encoding="utf-8")
+    src = (REPO / "intelligent-contracts" / "interlock.py").read_text(encoding="utf-8")
 
     # Only two public write entry points exist: report_exploit (payable) and
     # withdraw_bond. Neither accepts a rulebook value.

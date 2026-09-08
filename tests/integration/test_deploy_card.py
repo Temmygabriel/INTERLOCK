@@ -22,8 +22,8 @@ from ._helpers import (
 )
 from gltest.assertions import tx_execution_failed
 
-VAULT_CODE = (REPO / "contracts" / "demo_vault.py").read_text(encoding="utf-8")
-INTERLOCK_CODE = (REPO / "contracts" / "interlock.py").read_text(encoding="utf-8")
+VAULT_CODE = (REPO / "intelligent-contracts" / "demo_vault.py").read_text(encoding="utf-8")
+INTERLOCK_CODE = (REPO / "intelligent-contracts" / "interlock.py").read_text(encoding="utf-8")
 
 
 def test_print_deployment_card(gl_client, default_account, accounts):

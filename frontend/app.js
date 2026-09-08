@@ -53,9 +53,11 @@ function clip(s, n = 160) {
 }
 
 // ------------------------------------------------------------------ plain
-// v2 copy rule (spec §3.3): never show a raw "audit #N" to a visitor. Every
-// on-chain audit entry is translated into a real date and a plain sentence
-// built from fields the contract already returns (op/amount/coverage/time).
+// v2 copy rule (spec §3.3): never offer a raw "audit #N" as an evidence *choice*.
+// Every on-chain audit entry is translated into a real date and a plain sentence
+// built from fields the contract already returns (op/amount/coverage/time), so a
+// visitor picks an entry they can understand. After a verdict the log may still
+// reference the entry by number — a locator back into that same dropdown.
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function humanTime(v) {
   if (v == null) return "—";
@@ -75,7 +77,6 @@ function opVerb(e) {
     case "guardian_pause": return "the breaker paused the vault";
     case "governance_resume": return "governance resumed the vault";
     case "guardian_update": return "governance changed the vault's guardian";
-    case "set_guardian": return "governance changed the vault's guardian";
     default: {
       // last resort: humanize a snake_case op rather than show raw bytes
       const pretty = op.replace(/_/g, " ");
@@ -97,6 +98,15 @@ function describeAudit(e) {
     tail: coverageLine(e),
     risky: e.coverage != null && num(e.coverage) < 100,
   };
+}
+// Human label for an incident effect token, so a verdict line never leaks a raw
+// internal enum ("apply_pause") to the visitor.
+function effVerb(e) {
+  if (e === "apply_pause") return "vault paused";
+  if (e === "noop_already_paused") return "already paused";
+  if (e === "noop_false_report") return "no action — false report";
+  const s = String(e || "").replace(/_/g, " ");
+  return s || "no action";
 }
 
 // ---------------------------------------------------------------- panel state
@@ -274,10 +284,11 @@ function verdictTrip(inc) {
   const v = $("verdict");
   v.hidden = false;
   v.className = "verdict trip mono";
+  const cov = inc.coverage_after != null && inc.coverage_after >= 0 ? " · coverage " + num(inc.coverage_after) + "% after" : "";
   v.innerHTML =
     '<span class="big">EXPLOIT CONFIRMED — VAULT PAUSED</span>' +
-    '<span class="det">audit #' + num(inc.op_index) + " · effect " + inc.effect +
-    " · " + fmtTime(inc.time) + "</span>";
+    '<span class="det">audit entry #' + num(inc.op_index) + " · " + effVerb(inc.effect) +
+    cov + " · " + fmtTime(inc.time) + "</span>";
 }
 
 function verdictReject(inc) {
@@ -289,7 +300,7 @@ function verdictReject(inc) {
   v.className = "verdict reject mono";
   v.innerHTML =
     '<span class="big">FALSE REPORT — REJECTED</span>' +
-    '<span class="det">audit #' + num(inc.op_index) + " was ruled healthy · bond forfeited · reason: " +
+    '<span class="det">audit entry #' + num(inc.op_index) + " was ruled healthy · bond forfeited · reason: " +
     clip(inc.reason, 140) + "</span>";
 }
 
@@ -329,7 +340,7 @@ async function submitReport(idxParam) {
   $("reportMsg").textContent = "";
   $("verdict").hidden = true;
   setState("checking");
-  renderStateWord("CHECKING", "Judging audit #" + idx + " — real validator LLM round in progress…");
+  renderStateWord("CHECKING", "Judging audit entry #" + idx + " — real validator LLM round in progress…");
   $("evidencePreview").hidden = false;
 
   const cl = $("checklist");
@@ -424,7 +435,7 @@ async function submitReport(idxParam) {
   } else {
     outcome = "rejected";
     verdictReject(ourInc);
-    $("reportMsg").textContent = "Bond forfeited to the vault's resilience fund — no refund path exists. This is proof the breaker cannot be tripped on demand.";
+    $("reportMsg").textContent = "Bond forfeited and locked in the breaker — a false report has no refund path. This is proof the breaker cannot be tripped on demand.";
     $("reportMsg").className = "report-msg";
   }
   syncButtons();
@@ -627,14 +638,14 @@ async function tick() {
         "Exploit confirmed by validator consensus · vault paused · resume is governance-only");
       const last = await read(INTERLOCK, "get_incident", [num(s.incident_count) - 1]).catch(() => null);
       if (last && last.kind === "TRIPPED") {
-        $("reportMsg").textContent = "Confirmed at audit #" + num(last.op_index) + " · effect " + last.effect + " · " + fmtTime(last.time);
+        $("reportMsg").textContent = "Confirmed at audit entry #" + num(last.op_index) + " · " + effVerb(last.effect) + " · " + fmtTime(last.time);
         $("reportMsg").className = "report-msg good";
       }
     } else if (s.last_check_time) {
       setState("running");
       renderStateWord("RUNNING",
         armed
-          ? "Breaker armed · consensus is watching every operation on the vault"
+          ? "Breaker armed · a bonded report on any audit entry goes to a consensus judgment"
           : "Vault live, but this Interlock is NOT its guardian — the breaker is not installed");
     } else {
       setState("running");

@@ -19,6 +19,7 @@ calldata by hand. Two things this file encodes:
   address; re-running a poll is idempotent.
 """
 
+import json
 from pathlib import Path
 import time
 
@@ -98,7 +99,11 @@ def deploy(client, code: str, args, account, label: str) -> str:
         return client.deploy_contract(code=code, account=account, args=args)
     tx = _retry(_send, f"{label} deploy")
     rec = wait_status(client, tx, TransactionStatus.ACCEPTED, f"{label} deploy")
-    assert tx_execution_succeeded(rec), f"{label} deploy did not execute cleanly"
+    if not tx_execution_succeeded(rec):
+        raise AssertionError(
+            f"{label} deploy did not execute cleanly — receipt: "
+            + json.dumps(rec, default=str)[:5000]
+        )
     return rec["data"]["contract_address"]
 
 

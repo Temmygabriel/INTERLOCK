@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-VAULT_CONTRACT = REPO / "contracts" / "demo_vault.py"
+VAULT_CONTRACT = REPO / "intelligent-contracts" / "demo_vault.py"
 
 
 @pytest.fixture
