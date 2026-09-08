@@ -3,6 +3,16 @@
 **Deadline:** 2026-09-17 15:30 UTC — GenLayer hackathon, Autonomous Protocols.
 **Deploy/test home:** this repo (`github.com/Temmygabriel/INTERLOCK`), cloud GenLayer = studionet (gasless). **Demo direction (2026-09-08): migrate the demo to `studio-dev` (chain 61997, v0.6 RC stack) with the v0.3.0 runner pin; keep stable studionet (61999, v0.1.0 pin) intact as fallback.**
 
+## Status: THE LIVE TRIP WORKS ON STUDIO-DEV — #27 gate RESOLVED (2026-09-08) 🎯
+**The bonded report now settles → EXPLOIT_CONFIRMED → apply_pause → vault paused, proven end-to-end on a fresh studio-dev pair.** The blocker that forced the studionet fallback is gone. Recipe (baked into `lab_dev.py`, see `%LOCALAPPDATA%\Temp\glpy019\lab_dev.py`):
+1. Deploy vault + interlock on studio-dev, `set_guardian(vault→interlock)`, seed healthy ops (audit_len 4, coverage 271%).
+2. Drive the exploit: `borrow 110` → coverage 78% (undercollateralized), next audit index pinned.
+3. **Submit `report_exploit` with `value=min_bond+2` AND `fees=estimate_transaction_fees_for_write(interlock,"report_exploit",args=[idx],value=bond)`.** That sim is the whole trick: plain `estimate_transaction_fees()` returns NO `messageAllocations`, so the interlock's internal `apply_pause` message dies `fee no_matching_allocation # internal` (leader+validators agree → FINISHED_WITH_ERROR). The `_for_write` variant simulates the actual write and carries the apply_pause allocation (callKey = padded method name, messageType Internal, parentIndex 2^256-1, budget 1.2e14).
+4. Result: FINISHED_WITH_RETURN, verdict EXPLOIT_CONFIRMED, effect apply_pause → vault `paused=True`, interlock `tripped=True` (verified by read-back). Report sim occasionally flakes `sim_getFeeConfig Method not found` — retry. On an ALREADY-paused vault the sim returns empty allocations (apply_pause branch skipped) — always use a fresh untripped pair.
+- Live proof 2026-09-08 (`report3.py`): vault `0x693d…e211Fe` / interlock `0x4ef9…33b51` → TRIP VERDICT PASS. A second, previously-mysterious pair (`0xB35c…ea37`) had ALSO tripped at 14:17 via an unaccounted reporter — more live confirmation.
+- studionet fallback is **dead** with the 0.19 client (old protocol; `sim_getFeeConfig` Method-not-found; old-pin contracts can't boot) — studio-dev is now the ONLY demo network. Full facts in Claude memory `genlayer-verified-apis.md`.
+- Next: #27 finish (frontend/contracts integration harness on the 0.19 API when the suite runs), **#28 retarget the frontend + browser path to studio-dev** (this is where the **Vercel env vars change** — see #28 notes), then #9 README/pitch.
+
 ## Status: #26 DONE — v0.6 dialect port PROVEN on studio-dev (2026-09-08).
 Empirical probes (genlayer-py 0.19.0rc2 in an isolated venv under `%LOCALAPPDATA%\Temp\glpy019`, per the user's "first test if it works") settled the v0.3.0 mystery and forced the port:
 1. **The v0.3.0 hash `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng` is registered on `studio-dev` (61997) — NOT stable studionet (61999), which rejects it** (`invalid_contract`). The user's exact Storage example deploys + reads back on studio-dev (`get_storage: "hello"`).
