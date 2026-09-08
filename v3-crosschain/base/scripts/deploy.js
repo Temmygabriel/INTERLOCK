@@ -3,8 +3,10 @@
  *
  * Prerequisites:
  * - The v3 bridge infrastructure is deployed and configured (see
- *   v3-crosschain/DEPLOY-NOTES.md), in particular the Base Sepolia
- *   BridgeReceiver.sol that will deliver GenLayer TRIP messages.
+ *   v3-crosschain/DEPLOY-NOTES.md), in particular the BaseTripDispatcher that
+ *   will receive LayerZero TRIP messages and call trip() on this vault.
+ *   (BRIDGE_RECEIVER_ADDRESS must be the BaseTripDispatcher address — NOT the
+ *   shipped BridgeReceiver.sol, which only stores EVM->GenLayer messages.)
  * - Deployer wallet has Base Sepolia ETH for gas.
  *
  * Usage (from v3-crosschain/base):
@@ -15,7 +17,7 @@
  * Environment variables (also settable in .env — see .env.example):
  *   PRIVATE_KEY            - Deployer private key
  *   OWNER_ADDRESS          - Governance address (may resume, install bridge receiver)
- *   BRIDGE_RECEIVER_ADDRESS- Base Sepolia BridgeReceiver.sol address
+ *   BRIDGE_RECEIVER_ADDRESS- BaseTripDispatcher address (the one authorized to trip)
  *   BASE_SEPOLIA_RPC_URL   - optional, defaults to https://sepolia.base.org
  */
 require("dotenv").config();
@@ -66,10 +68,12 @@ async function main() {
   });
 
   console.log("\nNext steps:");
-  console.log("  1. Deploy interlock_v3.py on GenLayer with --target-contract", address);
-  console.log("  2. File a real report_exploit on interlock_v3.py");
-  console.log("  3. Wait for the relay to deliver the TRIP message");
-  console.log("  4. Check BaseDemoVault.paused -> true on Base Sepolia explorer");
+  console.log("  1. On the zkSync Era BridgeForwarder, register this vault's dispatcher:");
+  console.log("     ACTION=set-bridge-address ... DST_EID=40245 DST_BRIDGE_ADDRESS=<BaseTripDispatcher>");
+  console.log("  2. Deploy interlock_v3.py on GenLayer with --target-contract", address);
+  console.log("  3. File a real report_exploit on interlock_v3.py");
+  console.log("  4. Wait for the relay to deliver the TRIP message");
+  console.log("  5. Check BaseDemoVault.paused -> true on Base Sepolia explorer");
 }
 
 main().catch((error) => {

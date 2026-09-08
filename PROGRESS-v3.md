@@ -3,6 +3,7 @@
 Branch: `interlock-v3-crosschain`
 Spec: `interlock-v3-crosschain-plan.md`
 Started: 2026-09-08
+Last updated: 2026-09-08 (Phase 4)
 
 This is the v3 branch's own log. It lives ONLY on this branch and is separate
 from the main `PROGRESS.md` (which tracks the submission-ready core on `main`).
@@ -11,30 +12,31 @@ from the main `PROGRESS.md` (which tracks the submission-ready core on `main`).
 
 ## BLOCKER STATUS — read this first
 
-**GenLayer studionet deploys were GATED.** As of 2026-09-08, studionet was
-rejecting all new deploys with `invalid_contract absent_runner_comment`: the
-previously-pinned runner hash was no longer recognized. The main session then
-empirically probed candidate pins on studionet: the old `1jb45aa8…` pin and a
-`5jycge4…` v0.3.0 pin were both rejected, but the **boilerplate's own v0.1.0
-pin deploys successfully**. Only the Depends hash matters — the `# v0.x.y`
-marker line is ignored by validation.
-
-The confirmed working pin (matching the vendored boilerplate's own contracts):
+**GenLayer studionet deploys are HEALTHY again (the #22 fix).** The confirmed
+working pin (empirically probed by the main session; matches the vendored
+boilerplate's own contracts) is:
 
 ```
 # v0.1.0
 # { "Depends": "py-genlayer:1j12s63yfjpva9ik2xgnffgrs6v44y1f52jvj9w7xvdn7qckd379" }
 ```
 
-`interlock_v3.py` carries this two-line header, but **no GenLayer deploy has
-been attempted or verified this session.** Phase 0 (hello-world re-check) and
-all Phase 3/4 GenLayer deploys remain GATED until a real studionet deploy
-succeeds with this pin.
+`interlock_v3.py` and the new `v3-crosschain/genlayer/demo_vault.py` copy carry
+this two-line header (marker line first, blank line after the Depends comment).
+**No GenLayer deploy was attempted this session.** Deploys are ready to run once
+the studionet keystore is unlocked (`~/.genlayer/keystores/default.json`, address
+`a881…466d`, holds 15 GL — password needed).
 
-EVM (Base Sepolia / zkSync Era Sepolia) deploys need a funded testnet wallet +
-a Node toolchain. **No `npm install` was completed this session** (the machine
-is ~99% disk; the background install was discarded to free space). All EVM
-deploy/test steps are DEFERRED with exact commands below.
+**EVM (Base Sepolia / zkSync Era Sepolia) deploys and the relay are BLOCKED on
+credentials + a capable machine, not on code:**
+- No funded Base Sepolia / zkSync Era Sepolia EOA and no relay private key were
+  available this session. All EVM + relay commands are exact and ready
+  (see `v3-crosschain/DEPLOY-NOTES.md` Phase 4 runbook).
+- This machine is ~100% disk; no `npm install` (hardhat/ethers) was run and none
+  should be run here. Tests/deploys must run on a machine with disk headroom.
+
+**Nothing in this log should be read as a claim that the end-to-end run
+succeeded.** It has not been executed.
 
 ---
 
@@ -42,95 +44,192 @@ deploy/test steps are DEFERRED with exact commands below.
 
 | # | Phase | Status | Notes |
 |---|---|---|---|
-| 0 | Prerequisite check (studionet deploy healthy) | **GATED** | Runner pin empirically confirmed; no deploy attempted this session. |
-| 1 | Boilerplate setup | **DONE (code)** | Vendored `genlayer-studio-bridge-boilerplate` (commit `85fe384`) into `v3-crosschain/boilerplate/`. EVM deploys + trust config **DEFERRED** — exact commands in `v3-crosschain/DEPLOY-NOTES.md`. |
-| 2 | BaseDemoVault | **DONE (code + test, not executed)** | `v3-crosschain/base/BaseDemoVault.sol` + `test/BaseDemoVault.test.js` + standalone Hardhat project. Compile/test/deploy **DEFERRED** (needs `npm install` + funded wallet). Commands below. |
-| 3 | interlock_v3.py | **DONE (code)** | `v3-crosschain/genlayer/interlock_v3.py` mirrors the interlock.py judgment/guard pattern; emits a narrowly-typed `TRIP` message via `BridgeSender.emit().send_message(...)`. Header carries the confirmed pin. GenLayer deploy **GATED** pending a successful studionet deploy. |
-| 4 | Relay + receiver wiring | **DEFERRED** | Requires phases 1–3 to be live; relay must run during any demo. See `DEPLOY-NOTES.md` (including the observed destination-dispatch gap in the shipped `BridgeReceiver.sol`). |
-| 5 | v3 demo page | **DONE (scaffold)** | `v3-crosschain/frontend/` static page (HTML/CSS/JS, no build step), labeled "cross-chain extension (experimental)", with the plan §2 honesty disclosures on-page. |
-| 6 | Decision point | OPEN | Go/no-go with the user on including v3 in the submission. |
+| 0 | Prerequisite check (studionet deploy healthy) | **CONFIRMED via main** | #22 fix: the v0.1.0 pin deploys. No fresh hello-world deploy attempted this session. |
+| 1 | Boilerplate setup | **DONE (code)** | Vendored `genlayer-studio-bridge-boilerplate` (commit `85fe384`). EVM deploys + trust config **DEFERRED** — exact commands in `DEPLOY-NOTES.md`. |
+| 2 | BaseDemoVault | **DONE (code + tests, not executed)** | `BaseDemoVault.sol` + 12 tests. Compile/test/deploy **DEFERRED** (needs `npm install` + funded wallet). |
+| 3 | interlock_v3.py | **DONE (code)** | Mirrors interlock.py judgment/guard; emits narrowly-typed `TRIP` via `BridgeSender.emit().send_message(...)`. GenLayer deploy **READY** (pin confirmed) — not run. |
+| 4 | Relay + receiver wiring | **CODE DONE — NOT RUN** | Destination dispatch gap closed with `BaseTripDispatcher.sol` (+ 17 tests). Full runbook in `DEPLOY-NOTES.md`. **Blocked on funded EVM EOA + relay key + GenLayer keystore password.** |
+| 5 | v3 demo page | **DONE (scaffold)** | `v3-crosschain/frontend/` static page, labeled "cross-chain extension (experimental)", plan §2 honesty disclosures on-page. |
+| 6 | Decision point | **NOTES PREPARED** | See "Phase 6 — go/no-go notes" below. Conversation with the user still required. |
+
+---
+
+## Phase 4 work completed this session (2026-09-08)
+
+Phase 4's job was to make a real `TRIP` reach `BaseDemoVault` on Base Sepolia.
+The missing piece was the **destination dispatch**. The shipped `BridgeReceiver.sol`
+is a *store* (EVM→GenLayer), not a *dispatcher*: its `lzReceive` decodes a 5-field
+tuple and records it; it never calls `processBridgeMessage`. The relay, meanwhile,
+forwards the 4-field payload `BridgeSender.py` stores
+`(uint32 srcChainId, address srcSender, address localContract, bytes message)`
+— the same shape the forwarder's own same-chain branch decodes. So v3 needs a
+small destination receiver, and now has one:
+
+- **`v3-crosschain/base/BaseTripDispatcher.sol`** — LayerZero V2 receiver: only
+  the endpoint may call it; only the zkSync Era Sepolia `BridgeForwarder`
+  (srcEid `40305`) is trusted; it decodes the 4-field payload and calls
+  `processBridgeMessage` on a whitelisted target (`BaseDemoVault`). Its address
+  is registered on the forwarder as `bridgeAddresses[40245]`, and it is what
+  `BaseDemoVault.bridgeReceiver` must be set to.
+- **`v3-crosschain/base/contracts/lz/LzTypes.sol`** — minimal dependency-free
+  `Origin` struct + `ILayerZeroReceiver` interface (layout matches
+  `@layerzerolabs/lz-evm-protocol-v2` exactly; avoids a npm install of LZ deps).
+- **`v3-crosschain/base/contracts/test/MockEndpoint.sol`** — test-only endpoint
+  impersonation (checks `allowInitializePath`, then `lzReceive` as msg.sender).
+- **`v3-crosschain/base/test/BaseTripDispatcher.test.js`** — 17 tests proving the
+  whole unit path mock endpoint → dispatcher → BaseDemoVault, including
+  wrong-forwarder, untrusted-target, non-TRIP payload, and non-endpoint rejection.
+- **`v3-crosschain/base/scripts/deploy-dispatcher.js`** — deploy + initial
+  configure (trusted forwarder + trusted target) on Base Sepolia.
+- **`v3-crosschain/base/scripts/check.js`** — read `paused`/audit state on Base
+  Sepolia (the Phase 4 verification step).
+- **`v3-crosschain/genlayer/demo_vault.py`** — branch-isolated copy of the GenLayer
+  DemoVault (code identical to `main`, header pin updated to the confirmed v0.1.0
+  pin), so interlock_v3 has a fresh victim to judge without touching `main`.
+- **`v3-crosschain/boilerplate/example/scripts/report-trip.ts`** — files the
+  bonded `report_exploit` with `msg.value` (the `genlayer` CLI's `write` has no
+  `--value` flag).
+- **`v3-crosschain/boilerplate/example/scripts/check-outbox.ts`** — reads
+  `BridgeSender.get_message_hashes()` / `get_message()` to watch the TRIP leave
+  GenLayer.
+- **`v3-crosschain/base/.env.example`**, `scripts/deploy.js` — updated for the
+  dispatcher (the vault's bridge receiver is now the dispatcher, not the shipped
+  `BridgeReceiver`).
+- **`v3-crosschain/DEPLOY-NOTES.md`** — Phase 4 wiring section + full 8-step
+  end-to-end runbook.
+
+### What is NOT done (plainly)
+
+- No contract was compiled or deployed (no `npm install`; no funded keys).
+- No GenLayer contract was deployed (keystore not unlocked this session).
+- No relay ran. `BaseDemoVault.paused` was **not** flipped to true on any chain.
+- The 17 dispatcher tests were **written, not executed**.
 
 ---
 
 ## Exact commands to finish (phases 1–5)
 
-These were NOT run this session (deferred). Run them on this branch from the
-repo root once a funded testnet wallet + Node toolchain are available and the
-studionet pin is verified.
+These were NOT run this session. They are exact and ready — the full annotated
+runbook is `v3-crosschain/DEPLOY-NOTES.md` (Phase 4 wiring + End-to-end run).
+Summarized:
 
-### A. EVM bridge infrastructure (boilerplate — copy its README steps verbatim)
+### A. EVM bridge infrastructure (minimal v3 set: zkSync forwarder only)
 
 ```bash
-# from v3-crosschain/boilerplate/
-cd smart-contracts && npm install && cd ..
-cd service && npm install && cd ..
-
-# configure env (never commit .env)
-cp smart-contracts/.env.example smart-contracts/.env   # PRIVATE_KEY + RPC URLs
-cp service/.env.example service/.env                   # PRIVATE_KEY + GENLAYER_RPC_URL
-
-# deploy EVM infrastructure
-cd smart-contracts
-CONTRACT=receiver   npx hardhat run scripts/deploy.ts --network baseSepoliaTestnet
-CONTRACT=receiver   npx hardhat run scripts/deploy.ts --network zkSyncSepoliaTestnet
-CONTRACT=forwarder  npx hardhat run scripts/deploy.ts --network zkSyncSepoliaTestnet
-CONTRACT=sender     npx hardhat run scripts/deploy.ts --network baseSepoliaTestnet
-
-# link EVM contracts (trust config)
-ACTION=set-trusted-forwarder  npx hardhat run scripts/configure.ts --network zkSyncSepoliaTestnet
-ACTION=set-authorized-relayer npx hardhat run scripts/configure.ts --network zkSyncSepoliaTestnet
-ACTION=set-bridge-address     npx hardhat run scripts/configure.ts --network zkSyncSepoliaTestnet
-ACTION=set-sender-receiver    npx hardhat run scripts/configure.ts --network baseSepoliaTestnet
-ACTION=set-trusted-forwarder  npx hardhat run scripts/configure.ts --network baseSepoliaTestnet
+cd v3-crosschain/boilerplate/smart-contracts && npm install
+cp .env.example .env      # PRIVATE_KEY, OWNER_ADDRESS, CALLER_ADDRESS, RPCs, LZ endpoints
+CONTRACT=forwarder npx hardhat run scripts/deploy.ts --network zkSyncSepoliaTestnet
 ```
 
-### B. GenLayer "Brain" (GATED on a working studionet deploy — use the confirmed pin)
-
-Deploy via GenLayer Studio: `boilerplate/intelligent-contracts/BridgeSender.py`
-(no args) and `BridgeReceiver.py` (no args; then
-`set_authorized_relayer(wallet_address, true)`). Then set the addresses in
-`service/.env` (see `DEPLOY-NOTES.md` §6) and start the relay:
+### B. BaseTripDispatcher + BaseDemoVault (Base Sepolia)
 
 ```bash
-cd v3-crosschain/boilerplate/service
-npm run build
-npm start
-```
-
-### C. BaseDemoVault — compile, test, deploy
-
-```bash
-cd v3-crosschain/base
-npm install                 # deferred to free disk this session
-npx hardhat test            # 12 tests: flaw, audit log, trip() ACL, TRIP tag, resume, etc.
-PRIVATE_KEY=0x... OWNER_ADDRESS=0x... BRIDGE_RECEIVER_ADDRESS=<Base BridgeReceiver.sol> \
+cd v3-crosschain/base && npm install
+PRIVATE_KEY=0x... OWNER_ADDRESS=0x... TRUSTED_FORWARDER_ADDRESS=<ZK_FORWARDER> \
+  npx hardhat run scripts/deploy-dispatcher.js --network baseSepoliaTestnet
+PRIVATE_KEY=0x... OWNER_ADDRESS=0x... BRIDGE_RECEIVER_ADDRESS=<DISPATCHER> \
   npx hardhat run scripts/deploy.js --network baseSepoliaTestnet
+npx hardhat test          # BaseDemoVault (12) + BaseTripDispatcher (15)
 ```
 
-### D. interlock_v3.py deploy (GATED on the pin)
+### C. Link (zkSync): point forwarder at dispatcher
 
-Deploy via GenLayer Studio with the confirmed v0.1.0 pin. Constructor args:
-`target_vault` (GenLayer DemoVault), `governance`, `min_bond`,
-`bridge_sender` (GenLayer BridgeSender.py), `target_chain_eid` = `40245`
-(Base Sepolia), `target_contract` = deployed BaseDemoVault address.
+```bash
+cd ../boilerplate/smart-contracts
+ACTION=set-bridge-address DST_EID=40245 DST_BRIDGE_ADDRESS=<DISPATCHER> \
+  npx hardhat run scripts/configure.ts --network zkSyncSepoliaTestnet
+```
 
-### E. End-to-end check
+### D. GenLayer contracts (studionet, confirmed pin)
 
-File a real `report_exploit` on `interlock_v3.py` against a real exploit in the
-GenLayer `DemoVault` audit log. On `EXPLOIT_CONFIRMED`, confirm the outbound
-message in the GenLayer-side outbox (`BridgeSender.get_message_hashes()`), wait
-2–5 min, then check `BaseDemoVault.paused == true` on Base Sepolia (also via
-`v3-crosschain/frontend/?vault=<address>`).
+```bash
+genlayer deploy --contract v3-crosschain/boilerplate/intelligent-contracts/BridgeSender.py \
+  --rpc https://studio.genlayer.com/api
+genlayer deploy --contract v3-crosschain/genlayer/demo_vault.py --rpc https://studio.genlayer.com/api \
+  --args 0x<GOVERNANCE> 0x<GOVERNANCE>
+genlayer deploy --contract v3-crosschain/genlayer/interlock_v3.py --rpc https://studio.genlayer.com/api \
+  --args 0x<DEMOVAULT> 0x<GOVERNANCE> 1 0x<BRIDGE_SENDER> 40245 "<BASEDEMOVAULT>"
+```
+
+### E. Relay
+
+```bash
+cd v3-crosschain/boilerplate/service && npm install && npm run build && npm start
+# .env: BRIDGE_SENDER_ADDRESS, BRIDGE_FORWARDER_ADDRESS,
+#       FORWARDER_NETWORK_RPC_URL=https://sepolia.era.zksync.dev,
+#       GENLAYER_RPC_URL=https://studio.genlayer.com/api, PRIVATE_KEY=<relay key>
+```
+
+### F. End-to-end
+
+```bash
+genlayer write 0x<DEMOVAULT> borrow --rpc https://studio.genlayer.com/api --args 18
+# from v3-crosschain/boilerplate/example
+npx tsx scripts/report-trip.ts --interlock 0x<INTERLOCK_V3> --op-index 0 --value 1
+npx tsx scripts/check-outbox.ts --bridge-sender 0x<BRIDGE_SENDER>
+# wait 2-5 min for relay + LayerZero delivery
+cd v3-crosschain/base && VAULT_ADDRESS=<BASEDEMOVAULT> npx hardhat run scripts/check.js --network baseSepoliaTestnet
+# expect: paused == true, audit entry op=bridge_trip
+```
+
+---
+
+## Phase 6 — go/no-go notes (decision point)
+
+Prepared for the go/no-go conversation with the user. **No decision has been
+made; this is the input to it.**
+
+### What a "GO" buys
+
+- The demo would show a real, externally observable artifact the core submission
+  cannot: a GenLayer consensus-confirmed exploit verdict changing state on a
+  *different* chain (Base Sepolia), observable on Basescan. That is a genuinely
+  compelling extension of the core claim.
+- All the code is in place and the path is fully documented. The remaining work
+  is operational, not design: ~1-2 focused sessions with the right credentials.
+
+### What a "NO-GO" costs
+
+- Nothing. `main` remains the complete, honest, tested submission. The README
+  already carries the one-sentence sourced fallback (per plan §5).
+
+### The honesty constraints that apply EITHER WAY (from the plan, do not soften)
+
+1. `BaseDemoVault` is a **toy**, not Aave, and protects no real funds.
+2. The destination chain trusts the **relay** to faithfully deliver a message
+   that really came from confirmed GenLayer consensus. There is **no independent
+   finality proof** — trusted-relay, not consensus-authenticated. Same-chain
+   Interlock never has this problem.
+3. The **relay service is a real operational dependency**: if it is not running,
+   a real GenLayer-side trip never reaches Base Sepolia.
+4. v3 does not protect real Aave, real Base mainnet funds, or anything beyond the
+   toy `BaseDemoVault`.
+
+### Recommendation
+
+**GO for inclusion as a clearly-labeled experimental extension** (separate page,
+separate link, never folded into the core submission) IF the user can supply:
+(1) a funded Base Sepolia + zkSync Era Sepolia EOA key, (2) the GenLayer studionet
+keystore password (or a funded key), and (3) a machine with disk headroom for
+`npm install` (hardhat/ethers + genlayer-js) — or willingness to run the exact
+commands on the cloud/CI path. Without those three, **NO-GO by default**: the
+code is done but the run has not happened, and a demo must not imply otherwise.
+
+**Risk to call out:** the trust boundary is the single most important sentence.
+If v3 ships, the first thing any reviewer sees must be the trusted-relay
+disclosure, not the Basescan screenshot. Do not let the demo imply a trip is
+instant or guaranteed without the relay running.
 
 ---
 
 ## Trust-model note (do not contradict)
 
-Per `research/crosschain-investigation.md`: the GenLayer↔EVM bridge is real via
-GenLayer's LayerZero V2 hub-and-spoke (zkSync Era Sepolia hub, off-chain relay),
-but there is **no independent finality proof** binding an outbound message to
-GenLayer consensus. Today it is **trusted-relay, not consensus-authenticated**.
-Same-chain Interlock never has this problem. Any v3 text states exactly this.
+Per `research/crosschain-investigation.md` (research-crosschain branch): the
+GenLayer↔EVM bridge is real via GenLayer's LayerZero V2 hub-and-spoke (zkSync Era
+Sepolia hub, off-chain relay), but there is **no independent finality proof**
+binding an outbound message to GenLayer consensus. Today it is **trusted-relay,
+not consensus-authenticated**. Same-chain Interlock never has this problem. Any
+v3 text states exactly this.
 
 ## Honesty notes (do not contradict)
 
@@ -139,3 +238,4 @@ Same-chain Interlock never has this problem. Any v3 text states exactly this.
   the toy `BaseDemoVault`.
 - The relay service is a real operational dependency: if it is not running, a
   real GenLayer-side trip never reaches Base Sepolia.
+- No end-to-end run has been executed on this branch. Nothing here claims one did.
