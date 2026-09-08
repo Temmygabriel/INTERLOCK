@@ -1,0 +1,15 @@
+{
+  "name": "interlock-v3-base",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BaseDemoVault — toy EVM twin of the GenLayer DemoVault for the Interlock v3 cross-chain demo. NOT real Aave.",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:base-sepolia": "hardhat run scripts/deploy.js --network baseSepoliaTestnet"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.0"
+  }
+}

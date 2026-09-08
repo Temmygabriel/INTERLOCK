@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Interlock v3 — Cross-Chain Extension (experimental)</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <span class="brand">Interlock <span class="v3">v3</span></span>
+    <span class="tag">cross-chain extension (experimental)</span>
+    <nav>
+      <a href="#vault">Vault state</a>
+      <a href="#flow">How a trip works</a>
+      <a href="#honesty">Trust &amp; honesty</a>
+    </nav>
+  </div>
+</header>
+
+<section class="banner warning">
+  <strong>Experimental.</strong> This page is a separate extension to the Interlock
+  demo — it is <em>not</em> part of the core submission and may not reflect a live
+  deployment yet. Nothing here protects real funds.
+</section>
+
+<main>
+  <section class="intro">
+    <h1>Interlock v3 — a pause that crosses chains</h1>
+    <p>
+      The core Interlock demo pauses a vault that lives on the same chain as the
+      judge. v3 extends the same pattern across a bridge: when GenLayer consensus
+      confirms an exploit in a vault's audit log, Interlock v3 emits a narrowly-typed
+      <code>TRIP</code> message toward a <em>Base Sepolia</em> contract
+      (<code>BaseDemoVault</code>), which flips its <code>paused</code> flag.
+    </p>
+    <p>
+      The <em>judgment</em> is the same as always — pinned on-chain evidence,
+      independent validator re-derivation, deterministic guard. The <em>delivery</em>
+      is new: a LayerZero V2 bridge with an off-chain relay, on a hub-and-spoke model
+      anchored at zkSync Era Sepolia.
+    </p>
+  </section>
+
+  <section id="vault" class="card">
+    <h2>BaseDemoVault — live state</h2>
+    <p class="muted">
+      Enter the deployed <code>BaseDemoVault</code> address on Base Sepolia and this
+      page reads its public state over the public RPC. If the RPC is unreachable
+      (CORS / offline), use the Basescan link instead.
+    </p>
+    <form id="vault-form" class="row">
+      <label for="vault-address">Vault address</label>
+      <input id="vault-address" type="text" spellcheck="false"
+             placeholder="0x… (BaseDemoVault on Base Sepolia)" />
+      <button type="submit" id="check-btn">Check state</button>
+    </form>
+    <div id="vault-error" class="error" hidden></div>
+    <table id="vault-table" class="state-table" hidden>
+      <tbody>
+        <tr><th>paused</th><td id="s-paused">—</td></tr>
+        <tr><th>coverage</th><td id="s-coverage">—</td></tr>
+        <tr><th>collateral</th><td id="s-collateral">—</td></tr>
+        <tr><th>debt</th><td id="s-debt">—</td></tr>
+        <tr><th>audit entries</th><td id="s-audit">—</td></tr>
+        <tr><th>bridge receiver</th><td id="s-bridge-receiver">—</td></tr>
+      </tbody>
+    </table>
+    <p id="basescan-link" class="muted" hidden></p>
+    <p class="muted small">
+      <strong>Demo note:</strong> a trip is only visible here after the relay has
+      delivered it. Without the relay running, a real GenLayer-side trip never
+      reaches Base Sepolia.
+    </p>
+  </section>
+
+  <section id="flow" class="card">
+    <h2>How a trip works</h2>
+    <ol class="flow">
+      <li><strong>Report.</strong> Anyone posts a bonded report naming one operation in the GenLayer <code>DemoVault</code> audit log.</li>
+      <li><strong>Consensus judges.</strong> GenLayer validators independently re-classify the pinned entry. Only a closed-enum verdict matters.</li>
+      <li><strong>Outbox.</strong> On <code>EXPLOIT_CONFIRMED</code>, <code>interlock_v3.py</code> calls the Foundation's <code>BridgeSender.send_message(...)</code> with the exact tag <code>"TRIP"</code> — never a generic arbitrary-call payload.</li>
+      <li><strong>Relay.</strong> The Node.js relay polls the GenLayer outbox and calls <code>BridgeForwarder.callRemoteArbitrary</code> on zkSync Era Sepolia with the LayerZero fee.</li>
+      <li><strong>Delivery.</strong> LayerZero delivers to Base Sepolia; the destination receiver dispatches <code>processBridgeMessage</code> to <code>BaseDemoVault</code>.</li>
+      <li><strong>Paused.</strong> <code>BaseDemoVault.paused</code> flips to <code>true</code> — observable on Base Sepolia. Only the owner can <code>resume</code>.</li>
+    </ol>
+  </section>
+
+  <section id="honesty" class="card honesty">
+    <h2>Trust boundary — read this before believing the demo</h2>
+    <ul>
+      <li>
+        <strong><code>BaseDemoVault</code> is a toy, not Aave.</strong> It has one
+        deliberate flaw (borrow with no health check) and protects no real funds. v3
+        makes no claim to protect real Aave, real Base mainnet funds, or anything
+        beyond this toy contract.
+      </li>
+      <li>
+        <strong>The destination chain trusts the relay.</strong> The message that
+        flips <code>paused</code> is delivered by an off-chain relay service. There
+        is <strong>no independent finality proof</strong> binding an outbound message
+        to GenLayer validator consensus. Today the model is
+        <strong>trusted-relay, not consensus-authenticated</strong>. Same-chain
+        Interlock never has this problem.
+      </li>
+      <li>
+        <strong>The relay is a real operational dependency.</strong> If it is not
+        running, a real GenLayer-side trip will never reach Base Sepolia. A trip is
+        not instant, and not guaranteed, without it.
+      </li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  <p>
+    Branch: <code>interlock-v3-crosschain</code> ·
+    <a href="../DEPLOY-NOTES.md" target="_blank" rel="noopener">DEPLOY-NOTES</a> ·
+    <a href="../../PROGRESS-v3.md" target="_blank" rel="noopener">PROGRESS-v3</a>
+  </p>
+  <p class="small">
+    Base Sepolia chain id 84532 · zkSync Era Sepolia (hub) EID 40305 · Base Sepolia EID 40245
+  </p>
+</footer>
+
+<!-- ethers (optional, from cdnjs) — the page still works without it -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
+        onerror="window.__ethersMissing = true"></script>
+<script src="app.js"></script>
+</body>
+</html>

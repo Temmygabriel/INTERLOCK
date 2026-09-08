@@ -1,0 +1,317 @@
+/* Interlock v3 — cross-chain extension (experimental). Static page, no build step. */
+
+:root {
+  --ink: #12202f;
+  --ink-dim: #5a6b7c;
+  --line: #c7d2dd;
+  --grid: #e8eef4;
+  --paper: #ffffff;
+  --paper-dim: #f5f8fb;
+  --accent: #1f6feb;
+  --accent-dark: #174ea6;
+  --warn-bg: #fff4e0;
+  --warn-line: #e0a33c;
+  --err: #b3261e;
+  --ok: #1e8e3e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+    var(--paper-dim);
+  background-size: 24px 24px;
+  line-height: 1.55;
+}
+
+code,
+pre,
+th,
+input,
+button,
+.mono {
+  font-family: "Cascadia Code", "Consolas", "JetBrains Mono", monospace;
+}
+
+/* ------------------------------------------------------------------ top bar */
+
+.topbar {
+  background: var(--paper);
+  border-bottom: 2px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.topbar-inner {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+}
+
+.brand .v3 {
+  color: var(--accent);
+}
+
+.tag {
+  font-size: 12px;
+  color: var(--accent-dark);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 2px 10px;
+  background: #eef4ff;
+}
+
+.topbar nav {
+  margin-left: auto;
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+}
+
+.topbar nav a {
+  color: var(--ink-dim);
+  text-decoration: none;
+}
+
+.topbar nav a:hover {
+  color: var(--accent);
+}
+
+/* -------------------------------------------------------------------- banner */
+
+.banner {
+  max-width: 1000px;
+  margin: 18px auto 0;
+  padding: 12px 18px;
+  border: 1px solid var(--warn-line);
+  border-radius: 8px;
+  background: var(--warn-bg);
+  font-size: 14px;
+}
+
+/* ---------------------------------------------------------------------- main */
+
+main {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.intro h1 {
+  font-size: 26px;
+  margin: 8px 0 8px;
+}
+
+.intro p {
+  color: var(--ink-dim);
+  max-width: 72ch;
+}
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 20px 24px;
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+.muted {
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.small {
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------------ vault UI */
+
+.row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.row label {
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+
+#vault-address {
+  flex: 1;
+  min-width: 280px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--accent-dark);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.error {
+  color: var(--err);
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 13px;
+  background: #fdf0ef;
+}
+
+.state-table {
+  width: 100%;
+  max-width: 560px;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+.state-table th,
+.state-table td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.state-table th {
+  color: var(--ink-dim);
+  font-weight: 600;
+  width: 160px;
+}
+
+.state-table .badge {
+  display: inline-block;
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 12.5px;
+}
+
+.state-table .badge.on {
+  background: #e6f4ea;
+  color: var(--ok);
+  border: 1px solid var(--ok);
+}
+
+.state-table .badge.off {
+  background: #eef1f4;
+  color: var(--ink-dim);
+  border: 1px solid var(--line);
+}
+
+/* ---------------------------------------------------------------------- flow */
+
+.flow {
+  counter-reset: step;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.flow li {
+  position: relative;
+  padding-left: 44px;
+  font-size: 14px;
+}
+
+.flow li::before {
+  counter-increment: step;
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  color: var(--accent-dark);
+  background: #eef4ff;
+  display: grid;
+  place-items: center;
+  font-family: "Cascadia Code", monospace;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------------ honesty */
+
+.honesty {
+  border-left-color: var(--warn-line);
+}
+
+.honesty li {
+  margin-bottom: 12px;
+}
+
+.honesty li strong {
+  color: var(--ink);
+}
+
+/* -------------------------------------------------------------------- footer */
+
+footer {
+  max-width: 1000px;
+  margin: 10px auto 40px;
+  padding: 0 20px;
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+footer a {
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .topbar nav {
+    width: 100%;
+    margin-left: 0;
+  }
+}
