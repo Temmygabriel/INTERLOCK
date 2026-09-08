@@ -1,5 +1,5 @@
-# v0.1.0
-# { "Depends": "py-genlayer:1j12s63yfjpva9ik2xgnffgrs6v44y1f52jvj9w7xvdn7qckd379" }
+# v0.3.0
+# { "Depends": "py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng" }
 
 #
 # ============================================================================
@@ -16,14 +16,15 @@
 # PARTNER  Guarded by ONE Interlock (interlock.py). See ./README.md.
 # ============================================================================
 
-from genlayer import *
+import genlayer as gl
+from genlayer.types import *
 
 import json
 
 ERROR_EXPECTED = "[EXPECTED]"
 
 
-class DemoVault(gl.Contract):
+class DemoVault(gl.contract.Contract):
     """DemoVault: a toy lending pool that Interlock protects.
 
     It is intentionally small and legible. Every state-changing operation appends
@@ -51,7 +52,7 @@ class DemoVault(gl.Contract):
     # --- working state ---
     paused: bool
     seq: u256
-    audit: DynArray[str]
+    audit: gl.storage.DynArray[str]
 
     def __init__(self, owner: Address, guardian: Address):
         self.owner = owner
@@ -66,7 +67,9 @@ class DemoVault(gl.Contract):
     # ------------------------------------------------------------------ utils
 
     def _now(self) -> str:
-        return str(gl.message_raw["datetime"])
+        # Chain-time anchor from the message context (available on every call,
+        # including deploy). gl.vm.get_timestamp() is NOT reliable on this RC.
+        return str(gl.message.raw["datetime"])
 
     def _coverage_pct(self) -> int:
         # Whole-percent coverage. If there is no debt the pool is fully safe -> 10000.
@@ -89,9 +92,7 @@ class DemoVault(gl.Contract):
 
     def _require_live(self) -> None:
         if self.paused:
-            raise gl.vm.UserError(
-                message=ERROR_EXPECTED + " vault is paused (guardian tripped)"
-            )
+            raise gl.vm.UserError(ERROR_EXPECTED + " vault is paused (guardian tripped)")
 
     # ------------------------------------------------------------ public views
 
@@ -128,7 +129,7 @@ class DemoVault(gl.Contract):
     def deposit(self, amount: u256) -> None:
         self._require_live()
         if amount <= 0:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " amount must be positive")
+            raise gl.vm.UserError(ERROR_EXPECTED + " amount must be positive")
         self.collateral = self.collateral + amount
         self._record("deposit", int(amount))
 
@@ -136,7 +137,7 @@ class DemoVault(gl.Contract):
     def borrow(self, amount: u256) -> None:
         self._require_live()
         if amount <= 0:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " amount must be positive")
+            raise gl.vm.UserError(ERROR_EXPECTED + " amount must be positive")
         # FLAW (intentional): no health / maximum check. A borrower may take out an
         # undercollateralized loan, leaving the pool insolvent. This is the incident
         # the demo reports to Interlock.
@@ -147,13 +148,13 @@ class DemoVault(gl.Contract):
     def withdraw(self, amount: u256) -> None:
         self._require_live()
         if amount <= 0:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " amount must be positive")
+            raise gl.vm.UserError(ERROR_EXPECTED + " amount must be positive")
         if amount > self.collateral:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " withdraw exceeds collateral")
+            raise gl.vm.UserError(ERROR_EXPECTED + " withdraw exceeds collateral")
         new_collateral = self.collateral - amount
         if self.debt > 0 and new_collateral * u256(100) < self.debt * u256(100):
             raise gl.vm.UserError(
-                message=ERROR_EXPECTED + " withdraw would leave the vault undercollateralized"
+                ERROR_EXPECTED + " withdraw would leave the vault undercollateralized"
             )
         self.collateral = new_collateral
         self._record("withdraw", int(amount))
@@ -162,7 +163,7 @@ class DemoVault(gl.Contract):
     def apply_pause(self) -> None:
         """The brake. Only the guardian (Interlock) may call this. Idempotent."""
         if gl.message.sender_address != self.guardian:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " not guardian")
+            raise gl.vm.UserError(ERROR_EXPECTED + " not guardian")
         if not self.paused:
             self.paused = True
             self._record("guardian_pause", 0)
@@ -171,7 +172,7 @@ class DemoVault(gl.Contract):
     def resume(self) -> None:
         """Human governance only. Interlock has no code path that calls this."""
         if gl.message.sender_address != self.owner:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " not owner")
+            raise gl.vm.UserError(ERROR_EXPECTED + " not owner")
         if self.paused:
             self.paused = False
             self._record("governance_resume", 0)
@@ -188,10 +189,10 @@ class DemoVault(gl.Contract):
         Interlock later reads.
         """
         if gl.message.sender_address != self.owner:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " not owner")
+            raise gl.vm.UserError(ERROR_EXPECTED + " not owner")
         if self.paused:
             raise gl.vm.UserError(
-                message=ERROR_EXPECTED + " vault is paused — cannot change guardian"
+                ERROR_EXPECTED + " vault is paused — cannot change guardian"
             )
         self.guardian = new_guardian
         self._record("guardian_update", 0)

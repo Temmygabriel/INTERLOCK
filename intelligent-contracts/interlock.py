@@ -1,5 +1,5 @@
-# v0.1.0
-# { "Depends": "py-genlayer:1j12s63yfjpva9ik2xgnffgrs6v44y1f52jvj9w7xvdn7qckd379" }
+# v0.3.0
+# { "Depends": "py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng" }
 
 #
 # ============================================================================
@@ -19,7 +19,8 @@
 #          these same two files deployed again — see ./README.md.
 # ============================================================================
 
-from genlayer import *
+import genlayer as gl
+from genlayer.types import *
 
 import json
 
@@ -36,7 +37,24 @@ VERDICT_CLEAR = "NOT_CONFIRMED"
 ALLOWED_EFFECTS = ("apply_pause", "noop_already_paused", "noop_false_report")
 
 
-class Interlock(gl.Contract):
+def _err_message(x) -> str:
+    """Extract a comparable message from a UserError result or exception.
+
+    v0.6 UserError carries an arbitrary calldata-encodable payload accessed via
+    `.data` (the old `.message` no longer exists). The payload is either the
+    message string itself or a dict carrying a "message" key.
+    """
+    data = getattr(x, "data", None)
+    if data is None:
+        data = getattr(x, "message", None)
+    if data is None:
+        return str(x)
+    if isinstance(data, dict):
+        return str(data.get("message", ""))
+    return str(data)
+
+
+class Interlock(gl.contract.Contract):
     """Interlock — an autonomous circuit breaker for a DeFi protocol.
 
     One job, stated as a rule that cannot be bent by the contract's own logic:
@@ -68,18 +86,18 @@ class Interlock(gl.Contract):
     last_trip_at: str
     last_check_time: str
     report_seq: u256
-    reports: DynArray[str]    # one JSON record per filed report
-    incidents: DynArray[str]  # actionable events only: TRIPPED / FALSE_REPORT_REJECTED
-    refundable: TreeMap[str, u256]  # honest reporter address -> bond owed back
+    reports: gl.storage.DynArray[str]   # one JSON record per filed report
+    incidents: gl.storage.DynArray[str]  # actionable events only: TRIPPED / FALSE_REPORT_REJECTED
+    refundable: gl.storage.TreeMap[str, u256]  # honest reporter address -> bond owed back
 
     def __init__(self, target_vault: Address, governance: Address, min_bond: u256):
         if min_bond <= 0:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " min_bond must be positive")
+            raise gl.vm.UserError(ERROR_EXPECTED + " min_bond must be positive")
 
         self.target_vault = target_vault
         self.governance = governance
         self.min_bond = min_bond
-        self.deployed_at = str(gl.message_raw["datetime"])
+        self.deployed_at = self._now()
 
         manifest = {
             "schema": 1,
@@ -114,14 +132,16 @@ class Interlock(gl.Contract):
     # ------------------------------------------------------------------ utils
 
     def _now(self) -> str:
-        return str(gl.message_raw["datetime"])
+        # Chain-time anchor from the message context (available on every call,
+        # including deploy). gl.vm.get_timestamp() is NOT reliable on this RC.
+        return str(gl.message.raw["datetime"])
 
     def _is_vault_paused(self) -> bool:
-        vault = gl.get_contract_at(self.target_vault)
+        vault = gl.contract.get_at(self.target_vault)
         return bool(vault.view().params()["paused"])
 
     def _audit_len(self) -> int:
-        vault = gl.get_contract_at(self.target_vault)
+        vault = gl.contract.get_at(self.target_vault)
         return int(vault.view().audit_len())
 
     def _evidence_prompt(self, evidence_json: str) -> str:
@@ -214,15 +234,14 @@ class Interlock(gl.Contract):
 
         if bond < int(self.min_bond):
             raise gl.vm.UserError(
-                message=ERROR_EXPECTED
-                + " bond below minimum — send at least min_bond with the report"
+                ERROR_EXPECTED + " bond below minimum — send at least min_bond with the report"
             )
 
         idx = int(op_index)
         audit_len = self._audit_len()
         if idx < 0 or idx >= audit_len:
             raise gl.vm.UserError(
-                message=ERROR_EXPECTED + " op_index out of range (audit length " + str(audit_len) + ")"
+                ERROR_EXPECTED + " op_index out of range (audit length " + str(audit_len) + ")"
             )
 
         # ---- 1. PINNED READ ------------------------------------------------
@@ -235,7 +254,7 @@ class Interlock(gl.Contract):
         # reporter text. (Had the evidence lived off-chain — e.g. a tx body fetched
         # from an RPC — this read would instead be wrapped in
         # gl.eq_principle.strict_eq so validators agreed on the exact bytes.)
-        vault = gl.get_contract_at(self.target_vault)
+        vault = gl.contract.get_at(self.target_vault)
         entry = vault.view().get_audit_entry(u256(idx))
         entry["pinned"] = {
             "vault": str(self.target_vault),
@@ -263,24 +282,27 @@ class Interlock(gl.Contract):
                     return False  # validator could not derive a verdict -> disagree
                 return own["verdict"] == leaders_res.calldata["verdict"]
             # Leader did not return (errored / failed).
-            leader_msg = getattr(leaders_res, "message", "")
+            leader_msg = _err_message(leaders_res)
             try:
                 classify()  # rerun the same task independently
                 return False  # leader failed, validator succeeded -> disagree
             except gl.vm.UserError as e:
-                msg = getattr(e, "message", str(e))
+                msg = _err_message(e)
                 if msg.startswith(ERROR_EXPECTED) and msg == leader_msg:
                     return True  # identical deterministic business error
                 return False  # LLM / unknown error -> disagree, force retry
             except Exception:
                 return False
 
-        result = gl.vm.run_nondet_unsafe(classify, validate)
-        # run_nondet_unsafe returns the leader's verdict dict directly when the
-        # validator accepts it; if validators ever disagree the VM is terminated
-        # (Disagree), so no code after this point runs on a non-verdict — the guard
-        # fails shut by construction and no bond is ever escrowed on an unverified
-        # outcome.
+        raw_result = gl.vm.run_nondet(classify, validate)
+        # run_nondet returns the leader's verdict directly (or wraps it in a
+        # Result). Unwrap defensively, then proceed only on a real verdict dict.
+        if isinstance(raw_result, gl.vm.Return):
+            raw_result = raw_result.calldata
+        result = raw_result
+        # If validators ever disagree the VM is terminated (Disagree), so no code
+        # after this point runs on a non-verdict — the guard fails shut by
+        # construction and no bond is ever escrowed on an unverified outcome.
         verdict = result["verdict"]
         reason = str(result.get("reason", ""))[:200]
 
@@ -299,7 +321,7 @@ class Interlock(gl.Contract):
         if verdict == VERDICT_CONFIRMED:
             fired = False
             if not self._is_vault_paused():
-                gl.get_contract_at(self.target_vault).emit(on="finalized").apply_pause()
+                gl.contract.get_at(self.target_vault).emit(on="finalized").apply_pause()
                 fired = True
             effect = "apply_pause" if fired else "noop_already_paused"
             self.tripped = True
@@ -343,9 +365,7 @@ class Interlock(gl.Contract):
             # Unreachable (normalize returns only the two enum values or raises),
             # but a guard must fail shut: if a verdict is ever unrecognized, do not
             # act and do not escrow the bond.
-            raise gl.vm.UserError(
-                message=ERROR_EXPECTED + " unrecognized verdict — no action taken"
-            )
+            raise gl.vm.UserError(ERROR_EXPECTED + " unrecognized verdict — no action taken")
 
         self.reports.append(
             json.dumps(
@@ -382,9 +402,9 @@ class Interlock(gl.Contract):
         key = _canon_addr(sender)
         due = self.refundable.get(key, u256(0))
         if due <= 0:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " nothing to withdraw")
+            raise gl.vm.UserError(ERROR_EXPECTED + " nothing to withdraw")
         self.refundable[key] = u256(0)
-        gl.get_contract_at(sender).emit_transfer(value=due, on="finalized")
+        gl.contract.get_at(sender).emit_transfer(due, on="finalized")
 
 
 def _canon_addr(addr) -> str:
@@ -404,7 +424,7 @@ def _normalize_verdict(raw) -> dict:
     formatting failure -> ERROR_LLM, which validators treat as disagreement.
     """
     if not isinstance(raw, dict):
-        raise gl.vm.UserError(message=ERROR_LLM + " model returned non-dict: " + str(type(raw)))
+        raise gl.vm.UserError(ERROR_LLM + " model returned non-dict: " + str(type(raw)))
 
     raw_v = raw.get("verdict")
     if raw_v is None:
@@ -414,7 +434,7 @@ def _normalize_verdict(raw) -> dict:
                 break
     if raw_v is None:
         raise gl.vm.UserError(
-            message=ERROR_LLM + " missing verdict field; keys=" + str(sorted(raw.keys()))
+            ERROR_LLM + " missing verdict field; keys=" + str(sorted(raw.keys()))
         )
 
     s = str(raw_v).strip().lower().replace("_", " ").replace("-", " ")
@@ -440,4 +460,4 @@ def _normalize_verdict(raw) -> dict:
         "healthy",
     ):
         return {"verdict": VERDICT_CLEAR, "reason": str(raw.get("reason", ""))}
-    raise gl.vm.UserError(message=ERROR_LLM + " unrecognized verdict value: " + s)
+    raise gl.vm.UserError(ERROR_LLM + " unrecognized verdict value: " + s)
