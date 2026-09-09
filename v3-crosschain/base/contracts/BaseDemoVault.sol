@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IGenLayerBridgeReceiver} from "../boilerplate/smart-contracts/contracts/interfaces/IGenLayerBridgeReceiver.sol";
+import {IGenLayerBridgeReceiver} from "./interfaces/IGenLayerBridgeReceiver.sol";
 
 /// @title BaseDemoVault
 /// @notice A Solidity twin of the GenLayer `DemoVault`

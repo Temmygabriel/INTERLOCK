@@ -1,8 +1,9 @@
 require("@nomicfoundation/hardhat-toolbox");
 
 // Hardhat project for the Interlock v3 BaseDemoVault (toy EVM twin).
-// Sources are at the project root (BaseDemoVault.sol) plus the vendored
-// boilerplate's IGenLayerBridgeReceiver.sol (pulled in via relative import).
+// All sources live under contracts/ (self-contained: a vendored copy of the
+// boilerplate's IGenLayerBridgeReceiver.sol sits in contracts/interfaces), so
+// hardhat's source scan never touches node_modules (HH1006 otherwise).
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -16,7 +17,7 @@ module.exports = {
     },
   },
   paths: {
-    sources: "./",
+    sources: "./contracts",
     tests: "./test",
   },
   networks: {

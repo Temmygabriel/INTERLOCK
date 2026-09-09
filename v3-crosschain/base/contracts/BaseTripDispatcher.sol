@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IGenLayerBridgeReceiver} from "../boilerplate/smart-contracts/contracts/interfaces/IGenLayerBridgeReceiver.sol";
-import {Origin, ILayerZeroReceiver} from "./contracts/lz/LzTypes.sol";
+import {IGenLayerBridgeReceiver} from "./interfaces/IGenLayerBridgeReceiver.sol";
+import {Origin, ILayerZeroReceiver} from "./lz/LzTypes.sol";
 
 /// @title BaseTripDispatcher
 /// @notice Destination-side (Base Sepolia) LayerZero receiver for Interlock v3's
