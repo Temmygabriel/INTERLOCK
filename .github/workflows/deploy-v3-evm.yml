@@ -64,6 +64,14 @@ jobs:
         working-directory: v3-crosschain/base
         run: npm install --no-audit --no-fund
 
+      - name: Compile zkSync hub contracts (visible output)
+        working-directory: v3-crosschain/boilerplate/smart-contracts
+        run: npx hardhat compile
+
+      - name: Compile Base contracts (visible output)
+        working-directory: v3-crosschain/base
+        run: npx hardhat compile
+
       # ---- 1. Derive public addresses from the two keys -------------------
       - name: Derive owner (deployer) + caller (relay) addresses
         working-directory: v3-crosschain/boilerplate/smart-contracts
@@ -85,11 +93,15 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           LOG=$(CONTRACT=forwarder npx hardhat run scripts/deploy.ts --network zkSyncSepoliaTestnet 2>&1)
-          echo "$LOG"
-          FORWARDER=$(printf '%s' "$LOG" | grep -oE 'BridgeForwarder deployed to: 0x[0-9a-fA-F]{40}' | grep -oE '0x[0-9a-fA-F]{40}' | head -1)
-          test -n "$FORWARDER"
+          st=$?
+          printf '%s\n' "$LOG"
+          FORWARDER=$(printf '%s' "$LOG" | grep -oE 'BridgeForwarder deployed to: 0x[0-9a-fA-F]{40}' | grep -oE '0x[0-9a-fA-F]{40}' | head -1 || true)
+          if [ $st -ne 0 ] || [ -z "$FORWARDER" ]; then
+            echo "::error::BridgeForwarder deploy failed (status=$st) or address not captured."
+            exit 1
+          fi
           echo "FORWARDER=$FORWARDER" >> "$GITHUB_ENV"
           echo "FORWARDER=$FORWARDER"
 
@@ -99,12 +111,16 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           LOG=$(TRUSTED_FORWARDER_ADDRESS="$FORWARDER" \
             npx hardhat run scripts/deploy-dispatcher.js --network baseSepoliaTestnet 2>&1)
-          echo "$LOG"
-          DISPATCHER=$(printf '%s' "$LOG" | grep -oE 'BaseTripDispatcher deployed to: 0x[0-9a-fA-F]{40}' | grep -oE '0x[0-9a-fA-F]{40}' | head -1)
-          test -n "$DISPATCHER"
+          st=$?
+          printf '%s\n' "$LOG"
+          DISPATCHER=$(printf '%s' "$LOG" | grep -oE 'BaseTripDispatcher deployed to: 0x[0-9a-fA-F]{40}' | grep -oE '0x[0-9a-fA-F]{40}' | head -1 || true)
+          if [ $st -ne 0 ] || [ -z "$DISPATCHER" ]; then
+            echo "::error::BaseTripDispatcher deploy failed (status=$st) or address not captured."
+            exit 1
+          fi
           echo "DISPATCHER=$DISPATCHER" >> "$GITHUB_ENV"
           echo "DISPATCHER=$DISPATCHER"
 
@@ -114,12 +130,16 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           LOG=$(BRIDGE_RECEIVER_ADDRESS="$DISPATCHER" \
             npx hardhat run scripts/deploy.js --network baseSepoliaTestnet 2>&1)
-          echo "$LOG"
-          VAULT=$(printf '%s' "$LOG" | grep -oE 'BaseDemoVault deployed to: 0x[0-9a-fA-F]{40}' | grep -oE '0x[0-9a-fA-F]{40}' | head -1)
-          test -n "$VAULT"
+          st=$?
+          printf '%s\n' "$LOG"
+          VAULT=$(printf '%s' "$LOG" | grep -oE 'BaseDemoVault deployed to: 0x[0-9a-fA-F]{40}' | grep -oE '0x[0-9a-fA-F]{40}' | head -1 || true)
+          if [ $st -ne 0 ] || [ -z "$VAULT" ]; then
+            echo "::error::BaseDemoVault deploy failed (status=$st) or address not captured."
+            exit 1
+          fi
           echo "VAULT=$VAULT" >> "$GITHUB_ENV"
           echo "VAULT=$VAULT"
 
