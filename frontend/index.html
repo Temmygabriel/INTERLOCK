@@ -92,8 +92,8 @@
             <button class="mini" id="mmConnect" type="button">CONNECT</button>
           </div>
           <p class="mm-note" id="mmNote">Connect to show your wallet address (display only).
-            It never signs — reports are signed by the browser identity, and studionet
-            has no faucet to fund a wallet for the report bond.</p>
+            It never signs — reports are signed by the browser identity. studio-dev
+            writes are gasless with virtual value, so no wallet funding is needed.</p>
         </div>
       </div>
     </div>
@@ -209,7 +209,7 @@
         <p class="eyebrow">FIG. 3 — LIVE BREAKER INSTRUMENT</p>
         <h2 class="sec-title">The breaker, live.</h2>
         <p class="sec-sub">Everything below is read from the live contracts on
-          studionet — real state, real validator verdicts, real history. Nothing is
+          studio-dev — real state, real validator verdicts, real history. Nothing is
           fabricated.</p>
 
         <div class="instrument-shell">
@@ -227,7 +227,7 @@
               </div>
               <div class="inst-status">
                 <div class="status-word" id="statusWord" role="status" aria-live="polite">RUNNING</div>
-                <p class="status-note" id="statusNote">connecting to studionet…</p>
+                <p class="status-note" id="statusNote">connecting to studio-dev…</p>
               </div>
             </div>
 
@@ -302,7 +302,7 @@
           </div>
         </div>
 
-        <div class="netline mono" id="netline">studionet · chain 61999 · reading…</div>
+        <div class="netline mono" id="netline">studio-dev · chain 61997 · reading…</div>
       </div>
     </section>
 
@@ -360,7 +360,7 @@
               <code>min_bond</code> — all required, written once, no setter (the
               demo pairs use <code>min_bond = 5</code>):</p>
             <code class="cmd">genlayer deploy --contract interlock.py \
-  --rpc https://studio.genlayer.com/api \
+  --rpc https://studio-dev.genlayer.com/api \
   --args 0x…your_vault… 0x…your_governance… 5</code>
           </div>
           <div class="card">
@@ -372,7 +372,7 @@
               building next — the snippet below is its planned shape, not yet in the
               repo:</p>
             <code class="cmd">genlayer deploy --contract adapter.py \
-  --rpc https://studio.genlayer.com/api \
+  --rpc https://studio-dev.genlayer.com/api \
   --args 0x…your_vault… "pause(uint256)"</code>
           </div>
         </div>
@@ -400,7 +400,7 @@
 
   <footer class="sitefoot">
     <div class="wrap">
-      <p class="mono">INTERLOCK · an autonomous safety breaker on <a href="https://genlayer.com" target="_blank" rel="noopener">GenLayer</a> · live demo on studionet · run, don't walk — audit your borrows.</p>
+      <p class="mono">INTERLOCK · an autonomous safety breaker on <a href="https://genlayer.com" target="_blank" rel="noopener">GenLayer</a> · live demo on studio-dev · run, don't walk — audit your borrows.</p>
     </div>
   </footer>
 

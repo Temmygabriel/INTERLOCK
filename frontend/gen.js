@@ -15,12 +15,12 @@
 // contract — signable by any EIP-155 key. The app signs with the browser
 // identity's ethers.Wallet (see identity.js); MetaMask is display-only.
 
-export const RPC_URL = "https://studio.genlayer.com/api";
-export const CHAIN_ID = 61999; // studionet (GenLayer Studio Network)
+export const RPC_URL = "https://studio-dev.genlayer.com/api";
+export const CHAIN_ID = 61997; // studio-dev (GenLayer Studio Dev — chain 61997)
 export const CONSENSUS = "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575";
 export const INITIAL_VALIDATORS = 5;
 export const MAX_ROTATIONS = 3;
-// Any address works for `from` on reads (studionet does not gate them).
+// Any address works for `from` on reads (studio-dev does not gate them).
 export const ANON_FROM = "0x" + "11".repeat(20);
 
 // ---- type tags (genlayer_py/abi/calldata/consts.py) -------------------------
@@ -258,7 +258,7 @@ export async function read(contract, method, args, from = ANON_FROM) {
   const params = [{
     type: "read", to: contract, from,
     data: callDataSim(method, args),
-    transaction_hash_variant: "latest_nonfinal",
+    transaction_hash_variant: "latest-nonfinal",
   }];
   try {
     return glDecode(hexBytes(await rpcReadOnce("gen_call", params)));
@@ -272,3 +272,110 @@ export async function read(contract, method, args, from = ANON_FROM) {
 /** Small helper: contract *str-address* views return checksummed hex strings; a
  *  UI comparing addresses should lowercase both sides. */
 export const norm = (s) => String(s).toLowerCase();
+
+// ------------------------------------------------------ v0.6 fee estimation
+//
+// studio-dev (v0.6 RC) runs FEE-AWARE consensus: every write must be wrapped in
+// consensus-main's new addTransaction(fees-tuple) or it is silently dropped.
+// The browser cannot compute the fee packet itself (it needs the internal
+// apply_pause message allocation), but it does NOT have to: the server's own
+// `sim_getFeeConfig` defaultFees, echoed back as the sim's initial `fees`,
+// makes `sim_estimateTransactionFees` return a `recommendedPreset` that carries
+// the authoritative distribution + feeValue + messageAllocations (verified
+// 2026-09-08 — a report encoded from that preset SETTLED on studio-dev). These
+// helpers just fetch those two server answers losslessly.
+
+/** JSON.parse that preserves u256 integers. The fee RPCs return values like
+ *  messageAllocations[].parentIndex = 2^256-1 as an UNQUOTED decimal literal;
+ *  res.json() would round it to an imprecise JS Number and break ethers.
+ *  Integer literals with >=16 digits are re-parsed as BigInt. */
+export function losslessParse(text) {
+  const out = [];
+  const isDigit = (c) => c >= "0" && c <= "9";
+  let i = 0, inStr = false;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inStr) {
+      out.push(ch);
+      if (ch === "\\") { if (i + 1 < text.length) { out.push(text[i + 1]); i += 2; } else i++; continue; }
+      if (ch === '"') inStr = false;
+      i++;
+      continue;
+    }
+    if (ch === '"') { inStr = true; out.push(ch); i++; continue; }
+    if (ch === "-" || isDigit(ch)) {
+      let j = i + (ch === "-" ? 1 : 0);
+      let frac = false, exp = false;
+      while (j < text.length && isDigit(text[j])) j++;
+      if (j < text.length && text[j] === ".") { frac = true; j++; while (j < text.length && isDigit(text[j])) j++; }
+      if (j < text.length && (text[j] === "e" || text[j] === "E")) {
+        exp = true; j++;
+        if (j < text.length && (text[j] === "+" || text[j] === "-")) j++;
+        while (j < text.length && isDigit(text[j])) j++;
+      }
+      const token = text.slice(i, j);
+      // integer literal (no dot/exponent) with a 16+ digit magnitude
+      const intPart = token.replace(/^[-+]?/, "").split(/[.eE]/)[0];
+      out.push(!frac && !exp && intPart.length >= 16 ? JSON.stringify(token) : token);
+      i = j;
+      continue;
+    }
+    out.push(ch); i++;
+  }
+  return JSON.parse(out.join(""), (k, v) =>
+    (typeof v === "string" && /^-?\d{16,}$/.test(v)) ? BigInt(v) : v);
+}
+
+async function rpcLossless(method, params) {
+  const res = await fetch(RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+  });
+  const j = losslessParse(await res.text());
+  if (j.error) throw new Error(`${method}: ${j.error.message}`);
+  return j.result;
+}
+
+const FEE_NET = /fetch failed|Failed to fetch|ECONNRESET|ENOTFOUND|ETIMEDOUT|aborted|AbortError|timeout|502|Bad gateway|Internal|Method not found|invalid json/i;
+
+// The two fee RPCs sit behind a flaky studio-dev gateway: bounded transport
+// retry is safe here (both are read-only simulations — nothing is signed yet).
+async function rpcFeeRetry(method, params, tries = 4) {
+  let last;
+  for (let t = 0; t < tries; t++) {
+    try { return await rpcLossless(method, params); }
+    catch (e) {
+      last = e;
+      if (!FEE_NET.test(String(e?.message ?? e))) throw e;
+      await new Promise((r) => setTimeout(r, 1500 * (t + 1)));
+    }
+  }
+  throw last;
+}
+
+/** sim_getFeeConfig result (lossless). Its `defaultFees` is echoed back as the
+ *  write-sim's initial fees — no policy math needed on our side. */
+export async function feeConfig() {
+  return rpcFeeRetry("sim_getFeeConfig", []);
+}
+
+/** sim_estimateTransactionFees for a WRITE, returning the authoritative
+ *  recommendedPreset (lossless) to encode into the addTransaction tuple.
+ *  @param to    the target contract (interlock / vault)
+ *  @param from  the REAL signer address (consensus uses it as the tx sender)
+ *  @param data  the RLP([glEncode({method,args}),0x80]) blob (callData)
+ *  @param value the user value carried (report bond / 0) — wei
+ *  @param defaultFees feeConfig().defaultFees — echoed verbatim */
+export async function estimateWriteFees(to, from, data, value, defaultFees) {
+  const fees = JSON.parse(JSON.stringify(defaultFees ?? {}, (k, v) =>
+    typeof v === "bigint" ? Number(v) : v)); // BigInt leaves -> Number (all < 2^53)
+  const params = [{
+    type: "write", to, from, data,
+    transaction_hash_variant: "latest-nonfinal",
+    value: "0x" + BigInt(value).toString(16),
+    fees,
+  }];
+  const res = await rpcFeeRetry("sim_estimateTransactionFees", params);
+  return res?.recommendedPreset ?? null;
+}

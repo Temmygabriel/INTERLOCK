@@ -1,132 +1,255 @@
 // tx.js — build + sign + broadcast a GenLayer write from the browser.
 //
 // A GenLayer "write to a contract" is NOT a call to that contract. It is a
-// standard EVM transaction whose `to` is GenLayer's consensus-main contract
-// and whose `data` ABI-calls:
+// standard EVM transaction whose `to` is GenLayer's consensus-main contract and
+// whose `data` ABI-calls the v0.6 FEE-AWARE form:
 //
-//     addTransaction(sender, recipient, numOfInitialValidators,
-//                    maxRotations, calldata, validUntil)
+//     addTransaction((address sender, address recipient,
+//                     uint256 numOfInitialValidators, uint256 maxRotations,
+//                     uint256 validUntil, uint256 saltNonce, uint256 userValue,
+//                     tuple feesDistribution, bytes txCalldata,
+//                     tuple[] messageAllocations))
 //
-// where `calldata` is the RLP([glEncode({method,args}), 0x00]) blob from gen.js
-// and `value` carries any msg.value (e.g. a report bond). Because the envelope
-// is a standard EIP-1559 transaction, it can be signed by ethers (browser
-// identity — see identity.js). MetaMask is intentionally display-only in this
-// app: a report carries a GEN bond and studionet has no faucet to fund a wallet,
-// so MetaMask is never asked to sign.
+// where `txCalldata` is the RLP([glEncode({method,args}), 0x80]) blob from gen.js
+// and the outer EVM `value` = userValue + feeValue. The fee packet is NOT
+// computable client-side: it must reserve GEN for the validator round AND for
+// any internal message the write triggers (report_exploit -> apply_pause on the
+// vault). The browser therefore asks the RPC itself:
 //
-// Requires `globalThis.ethers` (ethers v6). The browser loads the UMD build
-// before this module; Node tests do `globalThis.ethers = await import('ethers')`.
+//   1. sim_getFeeConfig          -> its own defaultFees (the policy math lives
+//                                   server-side; we never replicate it)
+//   2. sim_estimateTransactionFees(fees = defaultFees) -> recommendedPreset,
+//      the authoritative distribution + feeValue + messageAllocations. A report
+//      encoded from that preset was verified (2026-09-08) to SETTLE on
+//      studio-dev — vault paused, interlock tripped, FINISHED_WITH_RETURN.
+//   3. ABI-encode the tuple from the preset, sign a legacy gasPrice-0 EIP-155 tx
+//      with the browser identity (identity.js), raw-broadcast.
+//
+// The envelope is a standard legacy EVM transaction, so it can be signed by
+// ethers offline (browser identity). MetaMask is intentionally display-only in
+// this app: a report carries a GEN bond and studio-dev has no faucet to fund a
+// wallet, so MetaMask is never asked to sign. Because every write is
+// fee-aware, plain writes (borrow) go through the SAME sim+encode path.
 
-import { CONSENSUS, CHAIN_ID, INITIAL_VALIDATORS, MAX_ROTATIONS, callData, rpc, read } from "./gen.js";
+import {
+  CONSENSUS, CHAIN_ID, INITIAL_VALIDATORS, MAX_ROTATIONS,
+  callData, rpc, estimateWriteFees, feeConfig, read,
+} from "./gen.js";
 
 const { Interface } = globalThis.ethers;
 
-// The consensus-main addTransaction on studionet has FIVE params:
-//   addTransaction(address _sender, address _recipient, uint256 _numOfInitialValidators,
-//                  uint256 _maxRotations, bytes _calldata)
-// (selector 0x27241a99). There is NO _validUntil — the SDK only appends one when
-// its ABI has >=6 params, and studionet's has 5. Passing a 6-param signature
-// changes the selector (0xe71d5196) and consensus-main can then not decode the
-// call: the tx is treated as targeting consensus-main itself, value is never
-// credited, and the write cancels.
-const CONSENSUS_IFACE = new Interface([
-  "function addTransaction(address _sender, address _recipient, uint256 _numOfInitialValidators, uint256 _maxRotations, bytes _calldata)",
-  "event NewTransaction(bytes32 txId, address recipient, address activator)",
-]);
+// v0.6 consensus-main addTransaction — JSON ABI fragment for the single
+// AddTransactionParams struct (exact member order from the on-chain ABI,
+// consensus_main_abi_v06.json). Arrays are passed positionally to ethers.
+const ADD_TRANSACTION = {
+  type: "function",
+  name: "addTransaction",
+  stateMutability: "payable",
+  inputs: [{
+    name: "_params",
+    type: "tuple",
+    components: [
+      { name: "sender", type: "address" },
+      { name: "recipient", type: "address" },
+      { name: "numOfInitialValidators", type: "uint256" },
+      { name: "maxRotations", type: "uint256" },
+      { name: "validUntil", type: "uint256" },
+      { name: "saltNonce", type: "uint256" },
+      { name: "userValue", type: "uint256" },
+      {
+        name: "feesDistribution", type: "tuple", components: [
+          { name: "leaderTimeunitsAllocation", type: "uint256" },
+          { name: "validatorTimeunitsAllocation", type: "uint256" },
+          { name: "appealRounds", type: "uint256" },
+          { name: "executionBudgetPerRound", type: "uint256" },
+          { name: "executionConsumed", type: "uint256" },
+          { name: "totalMessageFees", type: "uint256" },
+          { name: "rotations", type: "uint256[]" },
+          { name: "maxPriceGenPerTimeUnit", type: "uint256" },
+          { name: "storageFeeMaxGasPrice", type: "uint256" },
+          { name: "receiptFeeMaxGasPrice", type: "uint256" },
+        ],
+      },
+      { name: "txCalldata", type: "bytes" },
+      {
+        name: "messageAllocations", type: "tuple[]", components: [
+          { name: "messageType", type: "uint8" },
+          { name: "onAcceptance", type: "bool" },
+          { name: "parentIndex", type: "uint256" },
+          { name: "recipient", type: "address" },
+          { name: "callKey", type: "bytes32" },
+          { name: "budget", type: "uint256" },
+          { name: "feeParams", type: "bytes" },
+        ],
+      },
+    ],
+  }],
+};
 
-/** Calldata for consensus-main addTransaction(recipient, ourContractCall). */
-export function addTransactionData(from, recipient, method, args, validators = INITIAL_VALIDATORS, rotations = MAX_ROTATIONS) {
-  return CONSENSUS_IFACE.encodeFunctionData("addTransaction", [
-    from, recipient, validators, rotations, callData(method, args),
+const CONSENSUS_IFACE = new Interface([ADD_TRANSACTION]);
+
+/** losslessParse helper exposed for callers that also fetch sim responses. */
+export { losslessParse } from "./gen.js";
+
+/** Validate+normalize an address (lowercase hex) so tuple encoding is stable. */
+const addr = (s) => {
+  const a = String(s).toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(a)) throw new Error("bad address: " + s);
+  return a;
+};
+
+// Ethers encodes each tuple field positionally in the array order above.
+const FEE_DIST_ORDER = [
+  "leaderTimeunitsAllocation", "validatorTimeunitsAllocation", "appealRounds",
+  "executionBudgetPerRound", "executionConsumed", "totalMessageFees", "rotations",
+  "maxPriceGenPerTimeUnit", "storageFeeMaxGasPrice", "receiptFeeMaxGasPrice",
+];
+const ALLOC_ORDER = [
+  "messageType", "onAcceptance", "parentIndex", "recipient", "callKey", "budget", "feeParams",
+];
+
+function toBig(v) { return typeof v === "bigint" ? v : BigInt(v); }
+
+/** Build the addTransaction tuple value + outer EVM `value` from a
+ *  recommendedPreset (estimateWriteFees result).
+ *  @returns {{ data: string, value: bigint, preset: object }} */
+export function buildAddTransactionData({ from, recipient, method, args, value, preset }) {
+  const userValue = toBig(value ?? 0);
+  const dist = preset?.distribution ?? {};
+  const allocs = preset?.messageAllocations ?? [];
+  const feeValue = toBig(preset?.feeValue ?? 0);
+
+  const feesDistribution = FEE_DIST_ORDER.map((k) => {
+    if (k === "rotations") return (dist.rotations ?? []).map((r) => toBig(r));
+    return toBig(dist[k] ?? 0);
+  });
+
+  const messageAllocations = allocs.map((a) => [
+    toBig(a.messageType),
+    Boolean(a.onAcceptance),
+    toBig(a.parentIndex),
+    addr(a.recipient),
+    String(a.callKey ?? "0x0000000000000000000000000000000000000000000000000000000000000000"),
+    toBig(a.budget ?? 0),
+    String(a.feeParams ?? "0x"),
   ]);
+
+  const validUntil = BigInt(Math.floor(Date.now() / 1000) + 3600);
+  const params = [
+    addr(from), addr(recipient),
+    BigInt(INITIAL_VALIDATORS), BigInt(MAX_ROTATIONS),
+    validUntil, 0n, userValue,
+    feesDistribution,
+    callData(method, args),
+    messageAllocations,
+  ];
+  const data = CONSENSUS_IFACE.encodeFunctionData("addTransaction", [params]);
+  return { data, value: userValue + feeValue, feeValue, preset };
 }
 
 export async function getNonce(from) {
-  const r = await rpc("eth_getTransactionCount", [from, "latest"]);
+  const r = await rpc("eth_getTransactionCount", [addr(from), "latest"]);
   return BigInt(r);
+}
+
+const WIRE_NET = /fetch failed|Failed to fetch|ECONNRESET|ENOTFOUND|ETIMEDOUT|aborted|AbortError|timeout|502|Bad gateway|Internal|invalid json|Method not found/i;
+async function rpcRetry(fn, tries = 4) {
+  let last;
+  for (let t = 0; t < tries; t++) {
+    try { return await fn(); }
+    catch (e) {
+      last = e;
+      if (!WIRE_NET.test(String(e?.message ?? e))) throw e;
+      await new Promise((r) => setTimeout(r, 1500 * (t + 1)));
+    }
+  }
+  throw last;
 }
 
 export async function estimateGas(tx) {
-  const r = await rpc("eth_estimateGas", [{ ...tx, from: undefined && undefined, ...(tx.from ? {} : {}) }]);
-  // genlayer_py passes the full tx incl. from; studionet ignores from.
+  // eth_estimateGas wants hex quantities; BigInt would break JSON serialization.
+  const jsonTx = {};
+  for (const [k, v] of Object.entries(tx)) {
+    jsonTx[k] = typeof v === "bigint" ? "0x" + v.toString(16) : v;
+  }
+  const r = await rpc("eth_estimateGas", [jsonTx]);
   return BigInt(r);
-}
-
-async function baseFee() {
-  const block = await rpc("eth_getBlockByNumber", ["latest", false]);
-  const bf = block?.baseFeePerGas ?? "0x0";
-  return BigInt(bf);
 }
 
 /**
  * Sign a GenLayer write with the browser identity's ethers.Wallet and broadcast
- * it. Returns the *GenLayer* transaction id (bytes32 hex) once the outer EVM tx
- * is mined, so the caller can watch it finalize.
+ * it. Returns the outer EVM transaction hash once broadcast — the app then
+ * watches the result by polling contract reads (report_count / paused), never
+ * by trusting a receipt, because studio-dev's ledger settles asynchronously.
  *
- * IMPORTANT (studionet): the SDK signs a LEGACY type-0 EIP-155 tx here
- * (gasPrice 0, gas ~500000), NOT an EIP-1559 typed tx. The hosted network
- * accepts a type-2 tx at the EVM layer (receipt + NewTransaction) but its
- * ledger cannot then settle `value` (value_credited never happens) and the
- * consensus write fails. Match the SDK shape exactly.
+ * Fee path (studio-dev v0.6): every write goes through sim_getFeeConfig +
+ * sim_estimateTransactionFees to get the authoritative fee packet (see top of
+ * file). Nonce/gas are fetched with transport-level retry (safe — nothing
+ * signed yet); the signed broadcast is never auto-retried.
  */
 export async function sendWrite(signer, recipient, method, args, opts = {}) {
   const from = await signer.getAddress();
   const value = opts.value ?? 0n;
-  const data = addTransactionData(from, recipient, method, args);
+  const dataBlob = callData(method, args);
 
-  const nonce = await getNonce(from);
-  const tx = {
+  const cfg = await rpcRetry(() => feeConfig());
+  const preset = await rpcRetry(() => estimateWriteFees(recipient, from, dataBlob, value, cfg?.defaultFees));
+  if (!preset) throw new Error("sim_estimateTransactionFees returned no recommendedPreset");
+  const { data, value: outerValue } = buildAddTransactionData({
+    from, recipient, method, args, value, preset,
+  });
+
+  const nonce = await rpcRetry(() => getNonce(from));
+  const base = {
+    from,
     to: CONSENSUS,
     data,
-    value,
+    value: outerValue,
     nonce,
     chainId: CHAIN_ID,
-    gasPrice: 0n,                 // legacy type-0, as the Python SDK signs
+    gasPrice: 0n,                    // legacy type-0, as the Python SDK signs
   };
 
   let gas;
   try {
-    gas = await estimateGas({ from, to: CONSENSUS, data, value });
+    gas = await estimateGas(base);
   } catch (e) {
-    // studionet sometimes refuses estimateGas for fresh senders; fall back to
-    // the 500000 the SDK's eth_estimateGas returns on the happy path.
-    gas = 500_000n;
+    if (!WIRE_NET.test(String(e?.message ?? e))) throw e;
+    gas = 600_000n;                  // estimate gateway flake — SDK happy path ~this
   }
-  tx.gasLimit = gas;
+  base.gasLimit = gas;
 
-  // ethers.Wallet (browser identity): sign offline, exactly as built above, then
-  // raw-broadcast. studionet settles bonded writes from any 0-balance key.
-  const raw = await signer.signTransaction(tx);
-  const evmHash = await rpc("eth_sendRawTransaction", [raw]);
-
-  return waitConsensusTxId(evmHash);
+  // ethers.Wallet (browser identity): sign offline exactly as built above, then
+  // raw-broadcast. studio-dev settles bonded writes from any 0-balance key.
+  const raw = await signer.signTransaction(base);
+  return rpc("eth_sendRawTransaction", [raw]);
 }
 
-// studionet chain params (chainId 61999 decimal = 0xF22F) used only to switch a
-// connected MetaMask to studionet for DISPLAY. Gasless + virtual value.
-// blockExplorerUrls intentionally omitted — studionet has no public explorer.
-export const STUDIONET_CHAIN = {
-  chainId: "0xf22f",
-  chainName: "GenLayer Studio Network (studionet)",
+// studio-dev chain params (chainId 61997 decimal = 0xF22D) used only to switch a
+// connected MetaMask to studio-dev for DISPLAY. Gasless + virtual value.
+// blockExplorerUrls intentionally omitted — studio-dev has no public explorer.
+export const STUDIO_DEV_CHAIN = {
+  chainId: "0xf22d",
+  chainName: "GenLayer Studio Dev (studio-dev)",
   nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
-  rpcUrls: ["https://studio.genlayer.com/api"],
+  rpcUrls: ["https://studio-dev.genlayer.com/api"],
 };
 
-/** Ensure an EIP-1193 provider has studionet added AND selected. Used on the
+/** Ensure an EIP-1193 provider has studio-dev added AND selected. Used on the
  * display-only MetaMask connect so the wallet shows the right network. 4902 =
  * "chain not added yet" (MetaMask's wallet_switchEthereumChain error). */
-export async function ensureStudionet(provider) {
+export async function ensureStudioDev(provider) {
   try {
     await provider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: STUDIONET_CHAIN.chainId }],
+      params: [{ chainId: STUDIO_DEV_CHAIN.chainId }],
     });
   } catch (e) {
     if (e && e.code === 4902) {
-      await provider.request({ method: "wallet_addEthereumChain", params: [STUDIONET_CHAIN] });
+      await provider.request({ method: "wallet_addEthereumChain", params: [STUDIO_DEV_CHAIN] });
       await provider.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId: STUDIONET_CHAIN.chainId }],
+        params: [{ chainId: STUDIO_DEV_CHAIN.chainId }],
       });
     } else {
       throw e;
@@ -134,65 +257,7 @@ export async function ensureStudionet(provider) {
   }
 }
 
-/** Resolve the GenLayer transaction id for a broadcast EVM hash.
- *
- * On studionet the GenLayer txId equals the EVM tx hash, so we return the hash as
- * soon as the outer receipt is mined OR the GenLayer record leaves PENDING — the
- * receipt can lag the consensus verdict by a minute+, and vice versa. If a
- * distinct NewTransaction txId is ever present we prefer it.
- */
-async function waitConsensusTxId(evmHash) {
-  const deadline = Date.now() + 180_000;
-  let txId = evmHash;
-  for (;;) {
-    // GenLayer record status (fastest terminal signal on studionet)
-    const gt = await rpc("eth_getTransactionByHash", [evmHash]).catch(() => null);
-    const gs = gt?.status ?? "PENDING";
-    if (gs !== "PENDING") {
-      if (gt?.tx_id && gt.tx_id !== evmHash) txId = gt.tx_id;
-      return txId;
-    }
-    // Outer EVM receipt, in case it mines with a distinct NewTransaction id first
-    const rec = await rpc("eth_getTransactionReceipt", [evmHash]).catch(() => null);
-    if (rec && rec.status === "0x1") {
-      for (const log of rec.logs ?? []) {
-        try {
-          const parsed = CONSENSUS_IFACE.parseLog({ topics: log.topics, data: log.data });
-          if (parsed && parsed.name === "NewTransaction") {
-            txId = parsed.args.txId;
-            return txId;                       // distinct id seen — good enough
-          }
-        } catch { /* other logs */ }
-      }
-    }
-    if (rec && rec.status && rec.status !== "0x1") {
-      throw new Error("consensus tx reverted on chain (status " + rec.status + ")");
-    }
-    if (Date.now() > deadline) throw new Error("timeout waiting for consensus receipt " + evmHash);
-    await new Promise((r) => setTimeout(r, 4000));
-  }
-}
-
-/** Wait until the GenLayer transaction id reaches FINALIZED. */
-export async function waitFinalized(txId) {
-  const deadline = Date.now() + 180_000;
-  for (;;) {
-    const tx = await rpc("eth_getTransactionByHash", [txId]).catch(() => null);
-    const status = tx?.consensus_data?.finalized === true ||
-                   tx?.status_name === "FINALIZED" ||
-                   (tx?.consensus_data?.status ?? "").includes("FINAL");
-    if (status) return tx;
-    // Also treat ACCEPTED-with-execution-success at finalization boundary as done
-    if (Date.now() > deadline) throw new Error("timeout finalizing GenLayer tx " + txId);
-    await new Promise((r) => setTimeout(r, 5000));
-  }
-}
-
-/** Full convenience: sign+broadcast+await finalize, return the GenLayer tx id. */
-export async function genWrite(signer, recipient, method, args, opts = {}) {
-  const txId = await sendWrite(signer, recipient, method, args, opts);
-  await waitFinalized(txId);
-  return txId;
-}
+// Back-compat alias for callers that still reference the studionet name.
+export const ensureStudionet = ensureStudioDev;
 
 export { read };

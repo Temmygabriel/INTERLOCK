@@ -564,9 +564,9 @@ function wireIdentity() {
 
   // MetaMask — DISPLAY ONLY (Aegis pattern): connecting shows the wallet address
   // but never signs. A report is a payable write that carries a GEN bond as
-  // `value`; studionet has no faucet for arbitrary wallets, so MetaMask's own
+  // `value`; studio-dev has no faucet for arbitrary wallets, so MetaMask's own
   // balance check would refuse the transfer. The browser identity is the sole
-  // report signer. studionet (chain 61999 = 0xF22F, gasless) is still added on
+  // report signer. studio-dev (chain 61997 = 0xF22D, gasless) is still added on
   // connect so the wallet displays the right network.
   const mm = typeof window.ethereum !== "undefined" && window.ethereum;
   const mmAddrEl = $("mmAddr"), mmNote = $("mmNote"), mmBtn = $("mmConnect");
@@ -575,7 +575,7 @@ function wireIdentity() {
     if (!mm) {
       mmNote.textContent = "No MetaMask wallet detected — optional and display-only. Your browser identity signs every report.";
     } else if (!mmAccount) {
-      mmNote.textContent = "Connect to show your wallet address (display only). It never signs — reports are signed by the browser identity, and studionet has no faucet to fund a wallet for the report bond.";
+      mmNote.textContent = "Connect to show your wallet address (display only). It never signs — reports are signed by the browser identity. studio-dev writes are gasless with virtual value, so no wallet funding is needed.";
     } else {
       mmNote.textContent = "Connected for display only — this wallet is never asked to sign. Reports are signed by the browser identity above.";
     }
@@ -592,7 +592,7 @@ function wireIdentity() {
       const accs = await mm.request({ method: "eth_requestAccounts" });
       const a = accs?.[0];
       if (!a) throw new Error("no account returned");
-      await ensureStudionet(mm).catch(() => {}); // best-effort: wallet shows studionet for display
+      await ensureStudionet(mm).catch(() => {}); // best-effort: wallet shows studio-dev for display
       mmAccount = String(a).toLowerCase();
       mmAddrEl.textContent = ID.shortAddr(mmAccount) + " · " + ID.checksum(mmAccount).slice(0, 8) + "…";
       mmAddrEl.classList.add("on");
@@ -619,7 +619,7 @@ async function tick() {
     st = s; vp = v;
     const armed = canon(v.guardian) === canon(INTERLOCK);
     applyReadouts(armed);
-    $("netline").textContent = "studionet · chain 61999 · " + PAIR_NAME + " · interlock " + INTERLOCK + " · vault " + VAULT;
+    $("netline").textContent = "studio-dev · chain 61997 · " + PAIR_NAME + " · interlock " + INTERLOCK + " · vault " + VAULT;
 
     if (inFlight) {
       // during judgment only the numbers refresh; the resolver drives the state
@@ -652,7 +652,7 @@ async function tick() {
       renderStateWord("RUNNING", "Breaker armed · no checks yet · waiting for a report");
     }
   } catch (e) {
-    $("netline").textContent = "studionet · chain 61999 · network error — retrying… (" + clip(e?.message ?? e, 60) + ")";
+    $("netline").textContent = "studio-dev · chain 61997 · network error — retrying… (" + clip(e?.message ?? e, 60) + ")";
   } finally {
     busy = false;
   }
@@ -784,9 +784,9 @@ $("watchRun").addEventListener("click", watchDemo);
   if (!ID.loadIdentity()) { ID.createIdentity(); } // frictionless default signer
   renderIdentity();
 
-  $("reportMsg").textContent = "Contacting studionet…";
+  $("reportMsg").textContent = "Contacting studio-dev…";
   setState("running");
-  renderStateWord("RUNNING", "connecting to studionet…");
+  renderStateWord("RUNNING", "connecting to studio-dev…");
 
   let connected = false;
   for (let i = 0; i < 5 && !connected; i++) {
@@ -798,8 +798,8 @@ $("watchRun").addEventListener("click", watchDemo);
   }
   if (!connected) {
     setState("offline");
-    renderStateWord("OFFLINE", "cannot reach studionet — confirm the page is served over HTTPS and the RPC is up");
-    $("netline").textContent = "studionet · chain 61999 · unreachable — retrying";
+    renderStateWord("OFFLINE", "cannot reach studio-dev — confirm the page is served over HTTPS and the RPC is up");
+    $("netline").textContent = "studio-dev · chain 61997 · unreachable — retrying";
     setInterval(tick, pollMs);
     return;
   }
