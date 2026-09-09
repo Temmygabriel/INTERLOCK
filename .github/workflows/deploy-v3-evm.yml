@@ -93,6 +93,10 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
         run: |
+          # The runner launches every run: step with `bash -e`. That inherited
+          # errexit would kill the script at the LOG=$(...) substitution below
+          # (before st=$? / printf), silently hiding deploy errors. Cancel it.
+          set +e
           set -uo pipefail
           LOG=$(CONTRACT=forwarder npx hardhat run scripts/deploy.ts --network zkSyncSepoliaTestnet 2>&1)
           st=$?
@@ -111,6 +115,10 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
         run: |
+          # The runner launches every run: step with `bash -e`. That inherited
+          # errexit would kill the script at the LOG=$(...) substitution below
+          # (before st=$? / printf), silently hiding deploy errors. Cancel it.
+          set +e
           set -uo pipefail
           LOG=$(TRUSTED_FORWARDER_ADDRESS="$FORWARDER" \
             npx hardhat run scripts/deploy-dispatcher.js --network baseSepoliaTestnet 2>&1)
@@ -130,6 +138,10 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
         run: |
+          # The runner launches every run: step with `bash -e`. That inherited
+          # errexit would kill the script at the LOG=$(...) substitution below
+          # (before st=$? / printf), silently hiding deploy errors. Cancel it.
+          set +e
           set -uo pipefail
           LOG=$(BRIDGE_RECEIVER_ADDRESS="$DISPATCHER" \
             npx hardhat run scripts/deploy.js --network baseSepoliaTestnet 2>&1)
