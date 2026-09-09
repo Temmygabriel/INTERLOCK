@@ -28,6 +28,44 @@ Interlock never has this problem.
 
 ---
 
+## STUDIO-DEV TARGET UPDATE (2026-09-09) — GenLayer leg now deploys on studio-dev
+
+**The GenLayer leg of every runbook below must now target studio-dev (chain
+61997, v0.3.0 runner), NOT the studionet. The old studionet pin in the §5 /
+runbook-step-5 headers below is DEAD**: a studionet deploy with the v0.1.0
+pin becomes a zombie (lifecycle accepted, "Contract not found"). All three v3
+GenLayer contracts were ported to the studio-dev v0.3.0 dialect and
+**deploy-VERIFIED** (task #29, branch `interlock-v3-xchain-work` — the three
+addresses in `PROGRESS-v3.md` Phase 7 are a disposable proof-of-port instance;
+task #32 deploys the final linked set on studio-dev).
+
+What changed for an operator on studio-dev:
+
+1. **Header**: every GenLayer contract carries
+   `# v0.3.0` + `# { "Depends": "py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng" }`
+   + a blank line. The ported contracts in this tree already carry it.
+2. **Deploys are SDK-driven**, not the `genlayer` CLI: `create_client(chain=
+   studio_devnet, account=account)`, `estimate_transaction_fees()`,
+   `deploy_contract(code=<full source incl. header>, args=[CalldataAddress(
+   bytes.fromhex(h[2:])), int, str])`, `wait_for_transaction_receipt(...,
+   wait_until="finalized")`. Success = `txExecutionResultName ==
+   "FINISHED_WITH_RETURN"` AND `contract_address` present. (The ported
+   constructor arg order for `interlock_v3` is `(demo_vault, governance,
+   min_bond, bridge_sender, target_chain_eid, target_contract)`; `BridgeSender`
+   and `demo_vault` take no encoder/std-object surprises — see `PROGRESS-v3.md`
+   Phase 7 dialect facts.)
+3. **No GenLayer funds are needed** on studio-dev (the SDK test account is
+   credited) — this removes the studionet keystore-password blocker from the
+   end-to-end run.
+4. Everything EVM-side (Base/zkSync dispatcher/vault/forwarder, relay,
+   `check-outbox.ts`) is UNCHANGED by this update — only the GenLayer target
+   network and dialect changed.
+
+The studionet-oriented instructions below this point are retained for
+reference; treat their GenLayer deploy steps as superseded by the above.
+
+---
+
 ## PHASE 4 WIRING — read this first (destination dispatch gap, resolved)
 
 The shipped boilerplate's `BridgeReceiver.sol` is a **store**, not a **dispatcher**:

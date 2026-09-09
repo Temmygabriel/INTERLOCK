@@ -3,10 +3,57 @@
 Branch: `interlock-v3-crosschain`
 Spec: `interlock-v3-crosschain-plan.md`
 Started: 2026-09-08
-Last updated: 2026-09-08 (Phase 4)
+Last updated: 2026-09-09 (Phase 7 — studio-dev dialect port, deploy-verified)
 
 This is the v3 branch's own log. It lives ONLY on this branch and is separate
 from the main `PROGRESS.md` (which tracks the submission-ready core on `main`).
+
+---
+
+## PHASE 7 — STUDIO-DEV DIALECT PORT (2026-09-09) — supersedes everything below
+
+**The GenLayer side of v3 is now ported to the LIVE studio-dev stack (chain 61997,
+v0.3.0 runner pin `5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng`).**
+The old studionet (v0.1.0 dialect, pin `1j12s63…`) that the whole v3 GenLayer
+stack was written for is DEAD (deploys become zombies: lifecycle accepted,
+"Contract not found"). Task #29 (worktree `agent-a6f…`, branch
+`interlock-v3-xchain-work`) ported and deploy-VERIFIED all three GenLayer
+contracts on studio-dev:
+
+| Contract (file) | Studio-dev address (verification instance) | Verified |
+|---|---|---|
+| DemoVault (`v3-crosschain/genlayer/demo_vault.py`) | `0x03a91CDffB4676935a03D6d2de31d9b88B8FbE72` | deploy FINISHED_WITH_RETURN; genesis 142%; params/coverage/audit read back |
+| BridgeSender (`boilerplate/intelligent-contracts/BridgeSender.py`) | `0x1C3f35712416FeF61a714C2b5373b6ca0C7A0ea7` | deploy + `send_message` runtime write FINISHED_WITH_RETURN; stored hash `66e228ed…`; `get_message` returns relay shape (`data` 0x-hex, `target_chain_id`, `target_contract`) |
+| InterlockV3 (`v3-crosschain/genlayer/interlock_v3.py`) | `0x5D3D9dc85D01D161c31fA4F8D8D50EBF8Efa7144` | deploy + `status`/`constitution_view` read back (eid 40245, effect_set, trust_model) |
+
+The three addresses above are a **DISPOSABLE verification instance** (fresh random
+deployer, not persisted, not linked/armed for the live run) — proof-of-port only.
+Task #32 will deploy the final linked set on studio-dev.
+
+**Dialect facts discovered by deploy-probing (recorded here so nobody re-derives
+them):**
+1. New header: `# v0.3.0` + Depends `5jyc…qng` + blank line. Base
+   `gl.contract.Contract`, storage `gl.storage.TreeMap/DynArray`,
+   `gl.message.raw["datetime"]`, `gl.vm.UserError(<payload>)` (read via `.data`),
+   `gl.contract.get_at`, `gl.vm.run_nondet`, `.emit(on="finalized")`,
+   `.emit_transfer(due, on="finalized")`.
+2. **`genlayer.py.*` submodule imports DO NOT resolve on studio-dev** — neither
+   `from genlayer.py.evm import MethodEncoder` nor
+   `from genlayer.py.keccak import Keccak256`. Use the public `gl.evm.MethodEncoder`
+   and `gl.Keccak256` instead (`gl.Keccak256().update(bytes)…digest()` is
+   byte-correct EVM keccak256, verified against eth-hash).
+3. **The v0.3.0 runner does NOT execute std-object construction at module scope**
+   (a module-scope `MethodEncoder()`/`Keccak256()` makes the deploy finish
+   FINISHED_WITH_ERROR). Build std objects inside `__init__` (as a fail-fast, which
+   IS executed at deploy) or inline in the method that uses them. Every proven
+   `main` contract already obeys this (only str constants at module scope).
+4. Cross-contract `.emit().method()` does NOT return the child's return value, so
+   `interlock_v3` records `last_trip_hash=""` honestly; the authoritative message
+   hash is the key BridgeSender stored it under (`get_message_hashes()`), which is
+   exactly the view the relay polls.
+
+This commit is LOCAL to the worktree branch and NOT pushed; the coordinator
+reconciles the v3 branches and rebases onto `main` (task #30) before any push.
 
 ---
 

@@ -1,7 +1,6 @@
-# v0.1.0
-# { "Depends": "py-genlayer:1j12s63yfjpva9ik2xgnffgrs6v44y1f52jvj9w7xvdn7qckd379" }
-# NOTE: runner pin must be refreshed to studionet's current accepted hash before deploy (gated on #22).
-#
+# v0.3.0
+# { "Depends": "py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng" }
+
 # ============================================================================
 # interlock_v3.py — Interlock v3, the CROSS-CHAIN CIRCUIT BREAKER (the "guard").
 #
@@ -16,6 +15,11 @@
 #        take is `BridgeSender.send_message` carrying the exact string "TRIP" —
 #        never a generic arbitrary-call payload.
 #
+#        Dialect: this copy is ported to the studio-dev v0.3.0 dialect (chain
+#        61997) alongside main's interlock.py. Storage/API follow the ported
+#        same-chain breaker exactly; the confirmed-effect branch emits the TRIP
+#        bridge message via gl.contract.get_at(...).emit(on="finalized").
+#
 # PARTNER  Judges the audit log of ONE GenLayer DemoVault (demo_vault.py) and
 #          trips ONE EVM twin (v3-crosschain/base/BaseDemoVault.sol).
 #
@@ -28,7 +32,8 @@
 #          trip never reaches Base Sepolia.
 # ============================================================================
 
-from genlayer import *
+import genlayer as gl
+from genlayer.types import *
 
 import json
 
@@ -42,6 +47,13 @@ VERDICT_CLEAR = "NOT_CONFIRMED"
 # exact string and rejects anything else (see BaseDemoVault.sol).
 TRIP_TAG = "TRIP"
 
+# The narrowly-typed TRIP payload is `(str,)` calldata carrying the exact string
+# "TRIP", method selector stripped ([4:]). NOTE on the v0.3.0 dialect: the runner
+# does NOT execute std-object construction at module scope (a module-scope
+# gl.evm.MethodEncoder makes the deploy finish FINISHED_WITH_ERROR), so the
+# encoder is built inline at report time and validated once in __init__ so a bad
+# encoder / gl.evm path still fails the DEPLOY loudly.
+
 # Allowed effect surface of the guard. A confirmed exploit maps to exactly one
 # outward action (send the TRIP bridge message) or nothing (already sent).
 # A false report maps to nothing at all. There is no branch that moves funds,
@@ -49,7 +61,24 @@ TRIP_TAG = "TRIP"
 ALLOWED_EFFECTS = ("send_trip", "noop_already_tripped", "noop_false_report")
 
 
-class InterlockV3(gl.Contract):
+def _err_message(x) -> str:
+    """Extract a comparable message from a UserError result or exception.
+
+    v0.6 UserError carries an arbitrary calldata-encodable payload accessed via
+    `.data` (the old `.message` no longer exists). The payload is either the
+    message string itself or a dict carrying a "message" key.
+    """
+    data = getattr(x, "data", None)
+    if data is None:
+        data = getattr(x, "message", None)
+    if data is None:
+        return str(x)
+    if isinstance(data, dict):
+        return str(data.get("message", ""))
+    return str(data)
+
+
+class InterlockV3(gl.contract.Contract):
     """Interlock v3 — a cross-chain circuit breaker for a DeFi protocol.
 
     One job, stated as a rule that cannot be bent by the contract's own logic:
@@ -91,9 +120,9 @@ class InterlockV3(gl.Contract):
     last_trip_hash: str       # BridgeSender message hash of the last TRIP
     last_check_time: str
     report_seq: u256
-    reports: DynArray[str]    # one JSON record per filed report
-    incidents: DynArray[str]  # actionable events only: TRIP_SENT / FALSE_REPORT_REJECTED
-    refundable: TreeMap[str, u256]  # honest reporter address -> bond owed back
+    reports: gl.storage.DynArray[str]   # one JSON record per filed report
+    incidents: gl.storage.DynArray[str]  # actionable events only: TRIP_SENT / FALSE_REPORT_REJECTED
+    refundable: gl.storage.TreeMap[str, u256]  # honest reporter address -> bond owed back
 
     def __init__(
         self,
@@ -105,7 +134,7 @@ class InterlockV3(gl.Contract):
         target_contract: str,
     ):
         if min_bond <= 0:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " min_bond must be positive")
+            raise gl.vm.UserError(ERROR_EXPECTED + " min_bond must be positive")
 
         self.target_vault = target_vault
         self.governance = governance
@@ -113,7 +142,7 @@ class InterlockV3(gl.Contract):
         self.bridge_sender = bridge_sender
         self.target_chain_eid = u256(target_chain_eid)
         self.target_contract = target_contract
-        self.deployed_at = str(gl.message_raw["datetime"])
+        self.deployed_at = self._now()
 
         manifest = {
             "schema": 1,
@@ -161,13 +190,23 @@ class InterlockV3(gl.Contract):
         self.report_seq = u256(0)
         # DynArray / TreeMap storage starts empty; nothing further to initialize.
 
+        # FAIL-FAST at deploy: exercise the exact TRIP ABI-encode the confirmed
+        # branch uses (gl.evm.MethodEncoder over the (str,) TRIP payload), so a
+        # dialect/API drift fails the deploy loudly rather than surfacing only on
+        # the first real confirmed report. Module scope cannot hold std objects on
+        # the v0.3.0 runner, so this is validated here and built inline at report.
+        _boot_enc = gl.evm.MethodEncoder("", (str,), bool)
+        _ = _boot_enc.encode_call((TRIP_TAG,))
+
     # ------------------------------------------------------------------ utils
 
     def _now(self) -> str:
-        return str(gl.message_raw["datetime"])
+        # Chain-time anchor from the message context (available on every call,
+        # including deploy). gl.vm.get_timestamp() is NOT reliable on this RC.
+        return str(gl.message.raw["datetime"])
 
     def _audit_len(self) -> int:
-        vault = gl.get_contract_at(self.target_vault)
+        vault = gl.contract.get_at(self.target_vault)
         return int(vault.view().audit_len())
 
     def _evidence_prompt(self, evidence_json: str) -> str:
@@ -265,7 +304,7 @@ class InterlockV3(gl.Contract):
 
         if bond < int(self.min_bond):
             raise gl.vm.UserError(
-                message=ERROR_EXPECTED
+                ERROR_EXPECTED
                 + " bond below minimum — send at least min_bond with the report"
             )
 
@@ -273,7 +312,7 @@ class InterlockV3(gl.Contract):
         audit_len = self._audit_len()
         if idx < 0 or idx >= audit_len:
             raise gl.vm.UserError(
-                message=ERROR_EXPECTED + " op_index out of range (audit length " + str(audit_len) + ")"
+                ERROR_EXPECTED + " op_index out of range (audit length " + str(audit_len) + ")"
             )
 
         # ---- 1. PINNED READ ------------------------------------------------
@@ -284,7 +323,7 @@ class InterlockV3(gl.Contract):
         # (they are forbidden only inside non-deterministic blocks). Only structured,
         # on-chain, already-committed data is ever shown to the model — never
         # reporter text.
-        vault = gl.get_contract_at(self.target_vault)
+        vault = gl.contract.get_at(self.target_vault)
         entry = vault.view().get_audit_entry(u256(idx))
         entry["pinned"] = {
             "vault": str(self.target_vault),
@@ -312,24 +351,27 @@ class InterlockV3(gl.Contract):
                     return False  # validator could not derive a verdict -> disagree
                 return own["verdict"] == leaders_res.calldata["verdict"]
             # Leader did not return (errored / failed).
-            leader_msg = getattr(leaders_res, "message", "")
+            leader_msg = _err_message(leaders_res)
             try:
                 classify()  # rerun the same task independently
                 return False  # leader failed, validator succeeded -> disagree
             except gl.vm.UserError as e:
-                msg = getattr(e, "message", str(e))
+                msg = _err_message(e)
                 if msg.startswith(ERROR_EXPECTED) and msg == leader_msg:
                     return True  # identical deterministic business error
                 return False  # LLM / unknown error -> disagree, force retry
             except Exception:
                 return False
 
-        result = gl.vm.run_nondet_unsafe(classify, validate)
-        # run_nondet_unsafe returns the leader's verdict dict directly when the
-        # validator accepts it; if validators ever disagree the VM is terminated
-        # (Disagree), so no code after this point runs on a non-verdict — the guard
-        # fails shut by construction and no bond is ever escrowed on an unverified
-        # outcome.
+        raw_result = gl.vm.run_nondet(classify, validate)
+        # run_nondet returns the leader's verdict directly (or wraps it in a
+        # Result). Unwrap defensively, then proceed only on a real verdict dict.
+        # If validators ever disagree the VM is terminated (Disagree), so no code
+        # after this point runs on a non-verdict — the guard fails shut by
+        # construction and no bond is ever escrowed on an unverified outcome.
+        if isinstance(raw_result, gl.vm.Return):
+            raw_result = raw_result.calldata
+        result = raw_result
         verdict = result["verdict"]
         reason = str(result.get("reason", ""))[:200]
 
@@ -350,24 +392,26 @@ class InterlockV3(gl.Contract):
             fired = False
             if not self.tripped:
                 # Narrowly-typed TRIP payload: ABI-encode the exact string "TRIP"
-                # (a `[str]` ABI, method selector stripped). BaseDemoVault decodes
+                # (a `(str,)` ABI, method selector stripped). BaseDemoVault decodes
                 # this and accepts ONLY the "TRIP" tag — this is never a generic
                 # arbitrary-call payload that could invoke any function on the
                 # destination. Mirrors the boilerplate's StringSender example.
-                abi = [str]
-                encoder = gl.evm.MethodEncoder("", abi, bool)
-                message_bytes = encoder.encode_call([TRIP_TAG])[4:]  # Remove selector
+                encoder = gl.evm.MethodEncoder("", (str,), bool)
+                message_bytes = encoder.encode_call((TRIP_TAG,))[4:]  # Remove selector
 
-                bridge_contract = gl.get_contract_at(self.bridge_sender)
-                trip_hash = str(
-                    bridge_contract.emit().send_message(
-                        self.target_chain_eid,
-                        self.target_contract,
-                        message_bytes,
-                    )
+                bridge = gl.contract.get_at(self.bridge_sender)
+                bridge.emit(on="finalized").send_message(
+                    self.target_chain_eid,
+                    self.target_contract,
+                    message_bytes,
                 )
+                # HONESTY: the `.emit()` cross-contract proxy does not surface the
+                # child's return value (it returns None), so send_message's message
+                # hash cannot be captured here. We record "" rather than fabricate
+                # a hash. The authoritative hash is the key BridgeSender stored the
+                # message under — read it from BridgeSender.get_message_hashes()
+                # (exactly the view the off-chain relay polls).
                 self.tripped = True
-                self.last_trip_hash = trip_hash
                 fired = True
             effect = "send_trip" if fired else "noop_already_tripped"
             self.last_trip_at = now
@@ -411,9 +455,7 @@ class InterlockV3(gl.Contract):
             # Unreachable (normalize returns only the two enum values or raises),
             # but a guard must fail shut: if a verdict is ever unrecognized, do not
             # act and do not escrow the bond.
-            raise gl.vm.UserError(
-                message=ERROR_EXPECTED + " unrecognized verdict — no action taken"
-            )
+            raise gl.vm.UserError(ERROR_EXPECTED + " unrecognized verdict — no action taken")
 
         self.reports.append(
             json.dumps(
@@ -451,9 +493,9 @@ class InterlockV3(gl.Contract):
         key = _canon_addr(sender)
         due = self.refundable.get(key, u256(0))
         if due <= 0:
-            raise gl.vm.UserError(message=ERROR_EXPECTED + " nothing to withdraw")
+            raise gl.vm.UserError(ERROR_EXPECTED + " nothing to withdraw")
         self.refundable[key] = u256(0)
-        gl.get_contract_at(sender).emit_transfer(value=due, on="finalized")
+        gl.contract.get_at(sender).emit_transfer(due, on="finalized")
 
 
 def _canon_addr(addr) -> str:
@@ -473,7 +515,7 @@ def _normalize_verdict(raw) -> dict:
     formatting failure -> ERROR_LLM, which validators treat as disagreement.
     """
     if not isinstance(raw, dict):
-        raise gl.vm.UserError(message=ERROR_LLM + " model returned non-dict: " + str(type(raw)))
+        raise gl.vm.UserError(ERROR_LLM + " model returned non-dict: " + str(type(raw)))
 
     raw_v = raw.get("verdict")
     if raw_v is None:
@@ -483,7 +525,7 @@ def _normalize_verdict(raw) -> dict:
                 break
     if raw_v is None:
         raise gl.vm.UserError(
-            message=ERROR_LLM + " missing verdict field; keys=" + str(sorted(raw.keys()))
+            ERROR_LLM + " missing verdict field; keys=" + str(sorted(raw.keys()))
         )
 
     s = str(raw_v).strip().lower().replace("_", " ").replace("-", " ")
@@ -509,4 +551,4 @@ def _normalize_verdict(raw) -> dict:
         "healthy",
     ):
         return {"verdict": VERDICT_CLEAR, "reason": str(raw.get("reason", ""))}
-    raise gl.vm.UserError(message=ERROR_LLM + " unrecognized verdict value: " + s)
+    raise gl.vm.UserError(ERROR_LLM + " unrecognized verdict value: " + s)
