@@ -286,3 +286,62 @@ v3 text states exactly this.
 - The relay service is a real operational dependency: if it is not running, a
   real GenLayer-side trip never reaches Base Sepolia.
 - No end-to-end run has been executed on this branch. Nothing here claims one did.
+
+---
+
+## Phase 8 — v3 EVM leg DEPLOYED + WIRED on live testnets (task #31, 2026-09-10)
+
+Deployed entirely via GitHub Actions (`.github/workflows/deploy-v3-evm.yml`) —
+never from the local 8GB PC. Deploy run **34462322988**, wiring run **34463919827**
+(both green).
+
+| Role | Chain | Address |
+|------|-------|---------|
+| BridgeForwarder (hub) | zkSync Era Sepolia | `0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5` |
+| BaseTripDispatcher (LZ V2 receiver) | Base Sepolia | `0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5` |
+| BaseDemoVault (toy victim) | Base Sepolia | `0xCF3EfC03eb49F36f7a806FD39eDcDD3Db8EaB567` |
+
+Deployer `0x687B7C90b2EcB18cC812f04B2417ea28f6662B8e` owns all three; relay
+`0x6F539bD20033eE4cEC78784eac4C91fcAAc01f5b` is the forwarder's CALLER_ROLE
+holder (set at construction).
+
+**Wiring verified ON-CHAIN** (not merely logged):
+- `dispatcher.trustedForwarders[40305]` = forwarder `0x1567…237A5` ✓ (set at dispatcher deploy)
+- `vault.bridgeReceiver()` = dispatcher `0x1567…237A5` ✓ (constructor arg)
+- `dispatcher.trustedTargets[vault]` = **true** ✓ (tx `0xe114ed…ef1f`)
+- `forwarder.bridgeAddresses[40245]` = dispatcher `0x1567…237A5` ✓ (tx `0xb22a67…f6b8`, `BridgeAddressSet` event)
+
+The forwarder and dispatcher share an address: same deployer, nonce 0 on each
+chain, so the CREATE addresses coincide. Harmless (different chains) — and since
+the value the dispatcher must trust *is* the zkSync forwarder's address, it is
+also correct.
+
+### CI failures diagnosed en route (all fixed; the workflow is now a proven path)
+
+1. **HH1006 on Base compile** — `paths.sources: "./"` made hardhat scan
+   `node_modules` (eth-gas-reporter's mock `.sol`). Fix: self-contained
+   `base/contracts/` tree (vendored `interfaces/IGenLayerBridgeReceiver.sol`,
+   plus `lz/LzTypes.sol`), `sources: "./contracts"`.
+2. **Invisible deploy errors across three runs** — the runner launches every
+   `run:` step with `bash -e`, so a failing `LOG=$(npx hardhat …)` command
+   substitution killed the script *before* `st=$?` / `printf` / the `::error::`
+   guard, hiding the real error. Fix: `set +e` first in the capture-based steps.
+3. **zkSync deployer underfunded** — `insufficient funds for gas + value`,
+   balance 0.0004 ETH vs fee ~0.00055. User topped up to 0.0025 ETH.
+4. **Post-deploy `params()` BAD_DATA (vault step)** — the vault *deployed fine*
+   (`0xCF3E…B567`, tx `0xf8b4…2b7f`); the failure was a cosmetic read racing the
+   load-balanced public Base RPC. Fix: retry, then warn (never fatal).
+5. **`trustedTargets(vault)` stale `false` (whitelist step)** — the
+   `setTrustedTarget` tx succeeded (`status 0x1`, event fired, mapping true), but
+   an immediate read hit a lagging node. `retryRead` only retried *thrown* errors,
+   and `false` is a valid return, so it never helped. Fix: poll-until-true.
+
+Because 4–5 were script/wiring issues, not contract issues, the workflow gained a
+**`mode=configure`** input that replays ONLY the two wiring steps against existing
+addresses — used to finish the wiring without orphaning verified contracts or
+spending more deploy gas.
+
+### Still not done (do not overclaim)
+- No GenLayer-side v3 deploy on studio-dev yet (**#32**); no relay run (**#33**).
+- The relay wallet `0x6F53…f5b` holds ~0.0005 ETH on zkSync Era Sepolia — likely
+  enough for one LZ `callRemoteArbitrary`, but top up if the send fails.
