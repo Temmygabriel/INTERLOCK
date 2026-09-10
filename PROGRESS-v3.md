@@ -345,3 +345,95 @@ spending more deploy gas.
 - No GenLayer-side v3 deploy on studio-dev yet (**#32**); no relay run (**#33**).
 - The relay wallet `0x6F53…f5b` holds ~0.0005 ETH on zkSync Era Sepolia — likely
   enough for one LZ `callRemoteArbitrary`, but top up if the send fails.
+
+---
+
+## Phase 9 — v3 LIVE cross-chain TRIP VERIFIED END-TO-END (task #33, 2026-09-10)
+
+The whole point of v3: a real GenLayer TRIP, produced by validator consensus on a
+GenLayer contract, pauses a vault on **Base Sepolia**. It ran live, in one
+unbroken chain of custody, and every hop was read back off the chain.
+
+### GenLayer leg (studio-dev, task #32) — deployed + linked
+
+| Role | Address |
+|------|---------|
+| `demo_vault` (pinned-evidence victim) | `0x747a46E92DbC5214C84AD7c8eCDbcB3fF63B5D58` |
+| `BridgeSender` (outbox) | `0x751885dB21a891FE52619eD785b5EE9e22eAa17B` |
+| `interlock_v3` (the guard) | `0x49499dB82Ad857AD992c278CAb290FeB1B592165` |
+| deployer / governance / reporter | `0xB83f5B6A1E39598280A16aBEAeD95e05077b8750` |
+
+`interlock_v3.target_contract` is set to the **BaseDemoVault**, NOT the dispatcher.
+That is load-bearing: `BaseTripDispatcher` checks `trustedTargets[localContract]`,
+and `BridgeSender` writes `localContract = Address(target_contract)` into the
+envelope. Pointing `target_contract` at the dispatcher would have produced
+envelopes the dispatcher rejects.
+
+### The run — 6 hops, each verified on-chain
+
+1. **Exploit** — `demo_vault.borrow(18)` → collateral 57, debt 40 → 58, coverage
+   **98%**. `audit[0]` is the pinned incident (tx `0xea41c13d…`).
+2. **Report** — `interlock_v3.report_exploit(0)` with `value = 5` (min_bond).
+   Validators independently re-derived the verdict: **`EXPLOIT_CONFIRMED`**
+   ("Coverage is 98%, below 100%…"). `tripped = True`; `incident[0]` =
+   `{"kind":"TRIP_SENT","effect":"send_trip","coverage_after":98}`.
+   tx `0x0c5726caa55a18e3adb4cf3130b6728fd6f0440535b34588d87cc29483b9a555`,
+   `FINISHED_WITH_RETURN`.
+3. **Emit** — the `bridge.emit(on="finalized").send_message(40245, <vault>,
+   abi.encode("TRIP"))` child finalized on its own:
+   child tx `0x7b480025cf7d9ec67b21f51f92bfd6db2ea5765ede325f3956da2f45d21a2e1e`
+   → message hash `f47db7052efbd1d085fadbbb6f0cc39518f0e449cf60244161e3f5e31d8bd089`.
+4. **Outbox decoded** — `srcChainId 61998`, `srcSender` = interlock_v3,
+   `localContract` = BaseDemoVault, message = `'TRIP'` (canonical
+   `abi.encode(string)`), `target_chain_id 40245`. Every field asserted, not assumed.
+5. **Relay** — `BridgeForwarder.callRemoteArbitrary(hash, 40245, envelope,
+   options)` on zkSync Era Sepolia, paying the quoted LZ fee.
+   tx `0x8e176d7335557aa46f49396e0caccf2c9e13d2c16908e27c9d3efae89cfebd58`
+   (status 1, block 8437191, gasUsed 499247, fee 0.000116157288929968 ETH),
+   emitting `RemoteBridgeSent(dstEid=40245)`.
+6. **Delivery** — LayerZero V2 → `BaseTripDispatcher.lzReceive` → vault.
+   Base Sepolia tx `5eeacc02517667614b0a9c509280b51283accaa8e57102366bfabdeee4fe0e60`:
+   `TripForwarded(srcChainId=61998, srcSender=0x49499d…, target=0xCF3E…B567, message='TRIP')`
+   and `VaultTripped(by=dispatcher)`.
+
+**Final state read back off Base Sepolia: `BaseDemoVault.paused = True`,
+`auditLen = 1`, `audit[0] op = 'bridge_trip'`.**
+
+Scripts (all committed with this phase): `deploy_v3_studio.py`,
+`preflight_v3.py`, `run_trip_v3.py --stage borrow|report|outbox`,
+`relay_trip_v3.py`, `verify_v3.py` (the done-when evidence reader).
+
+### Two platform facts root-caused live (both cost real debugging)
+
+1. **A cross-contract `.emit(on="finalized")` needs a *message allocation* in
+   the parent's fee budget — and the plain fee estimator does not produce one.**
+   `client.estimate_transaction_fees()` returns a parent-only budget
+   (`max_messages_per_tx: 0`, `messageFeesBudgetTotal: 0`), so `report_exploit`
+   finalized with `contract_error: "fee no_matching_allocation # internal"`
+   **after consensus had already agreed on the verdict** — the trip was real but
+   the send was dropped. Fix: `client.estimate_transaction_fees_for_write(
+   address, function_name, account=…, args=…, value=…)`, which simulates the call
+   and returns `message_allocations` covering the emitted child (observed:
+   `callKey 0x73656e645f6d657373616765…` = `"send_message"`).
+   This is the SDK-side form of what the browser path already does — see the
+   `sim_estimateTransactionFees` note in `frontend/gen.js`, which passes the full
+   calldata precisely so the preset carries `messageAllocations`. Any same-chain
+   `interlock.py` test that exercises the emitted `apply_pause` child needs the
+   same treatment (*relevant to task #27*).
+2. **`sepolia.base.org` rejects wide `eth_getLogs` ranges with
+   `HTTPError: 413 Payload Too Large`.** `verify_v3.py --blocks 20000` fails;
+   ~2500-block windows work. Not a contract issue — a public-RPC limit.
+
+### TRUST MODEL — do not soften
+
+The destination chain trusts **this relay** to faithfully forward a message that
+really came from confirmed GenLayer consensus. There is no independent finality
+proof binding the outbound message to validator consensus. If the relay does not
+run, a genuine GenLayer-side trip never reaches Base Sepolia. This is the honest
+boundary of the v3 demo and must be stated as such in the pitch.
+
+### Still not done (do not overclaim)
+- The relay is a **manual script**, not a deployed service. Nothing restarts it.
+- Only one trip is demonstrated, and the vault is now permanently `paused`; a
+  second live run needs a fresh vault (or `resume()` from the owner).
+- No Base Sepolia → GenLayer return path is exercised (v3 is one-directional).
