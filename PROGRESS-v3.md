@@ -676,3 +676,60 @@ github.com -s workflow` has been run.
 main), `.github/workflows/relay-v3.yml` (untracked), and the two reset workflows
 still to be written.
 
+
+## Phase 13 — reset automation, written and blocked only by the push scope
+
+Task #36. The plan called for two workflows. Writing them exposed that the
+deploy script was already parameterised (`--target-contract`, `--min-bond`) but
+had no way to go from "three fresh contracts" to "a demo a visitor can act on",
+so that gap became a third script.
+
+### `arm_v3_demo.py` — the missing half of a reset
+`deploy_v3_studio.py` leaves a *healthy* vault: 142% coverage, empty audit log,
+nothing tripped. That is exactly the state in which the report button is
+correctly disabled — there is nothing to report. The demo needs the opposite,
+one pinned exploit entry.
+
+The script does `demo_vault.borrow(18)` (debt 40 → 58 vs collateral 57, so
+coverage 142% → 98%), then **verifies the entry actually reads back
+undercollateralized** and refuses to write the manifest if it does not. That
+check is the point: if coverage stayed ≥100% the pinned entry is not an exploit,
+and arming the page would be inviting visitors to file a false report and lose
+their bond. It also refuses a vault whose `audit_len` is not the expected fresh
+value, so a half-used trio can never be re-armed into an ambiguous state.
+
+It then rewrites `frontend/demo-manifest.json`, carrying the EVM legs over from
+the existing manifest rather than re-deriving them — a GenLayer reset does not
+redeploy Base, and must not silently rewrite addresses it did not deploy.
+
+Guards smoke-tested (no network, no key): missing key → 2; missing `--into`
+manifest → 2; blank `base_sepolia.dispatcher` → 2 before any RPC.
+
+### `deploy-v3-genlayer.yml` — GenLayer half
+Redeploys the trio, arms it, and commits the manifest so Vercel rebuilds against
+it. `concurrency` without `cancel-in-progress`: two racing resets would each
+deploy a trio and orphan one.
+
+### `reset-v3-demo.yml` — one button
+`resume()` on Base **first** (in place — `_trip()` has no replay guard, so the
+vault never needs redeploying, and `resume()` leaves the prior trip's audit
+evidence on-chain), then dispatches the GenLayer redeploy and hands it the
+resume tx. `resume_base_vault.py` gained `--manifest` (read `base_sepolia.vault`
+from the file the frontend builds from, instead of its stale hardcoded default)
+and a machine-readable `RESUME_TX=` line, empty on the idempotent no-op.
+
+### Verification done, and not done
+All four workflows parse as YAML and **all 27 `run:` blocks pass `bash -n`**.
+That caught one real bug: a multi-line `git commit -m "…"` with continuation
+lines at column 1 ended the YAML block scalar early and the whole workflow
+failed to parse.
+
+**None of it has been executed.** No run of either workflow, no `resume()`, no
+`borrow()`. Two of the three are new and unrun; the third is a port of a script
+that has run. Everything here is written-but-unproven and must be described that
+way until a reset actually runs.
+
+### Where the blocked files live
+`.claude/pending-workflows/` (gitignored) holds copies of all four workflow
+files, because they cannot be committed on this branch without making every
+future push fail. `relay-v3.yml` is also untracked in `.github/workflows/`.

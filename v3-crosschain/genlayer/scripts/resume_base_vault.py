@@ -13,7 +13,13 @@ This is the Base half of the demo reset. The GenLayer half is a fresh trio
 
 Run:
     V3_DEPLOYER_KEY=0x<hex> "$LOCALAPPDATA/Temp/glpy019/venv/Scripts/python.exe" \
-        v3-crosschain/genlayer/scripts/resume_base_vault.py [--vault 0x…]
+        v3-crosschain/genlayer/scripts/resume_base_vault.py [--vault 0x…] [--manifest frontend/demo-manifest.json]
+
+`--manifest` is what the reset workflow uses: it reads `base_sepolia.vault` /
+`base_sepolia.rpc` from the same file the frontend builds from, so a redeployed
+EVM leg is picked up without editing this script's defaults. The address is
+logged as `RESUME_TX=<hash>` (empty when the vault was already live) so the
+workflow can pass it through to the manifest.
 
 Exit codes: 0 = vault is live (resumed now, or already live), 1 = failure.
 """
@@ -24,6 +30,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 from web3 import Web3
 
@@ -52,7 +59,26 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--vault", default=VAULT)
     ap.add_argument("--rpc", default=BASE_RPC)
+    ap.add_argument("--manifest", default="",
+                    help="read base_sepolia.vault / base_sepolia.rpc from this "
+                         "manifest instead of the defaults above")
     args = ap.parse_args()
+
+    if args.manifest:
+        mp = Path(args.manifest)
+        if not mp.exists():
+            print(f"FATAL: manifest not found: {mp}", file=sys.stderr)
+            return 2
+        base = (json.loads(mp.read_text(encoding="utf-8")).get("base_sepolia") or {})
+        if not base.get("vault"):
+            print(f"FATAL: {mp} has no base_sepolia.vault", file=sys.stderr)
+            return 2
+        # Explicit flags still win over the manifest — an operator overriding on
+        # the command line means it.
+        if args.vault == VAULT:
+            args.vault = base["vault"]
+        if args.rpc == BASE_RPC and base.get("rpc"):
+            args.rpc = base["rpc"]
 
     bar = "=" * 72
     print(f"{bar}\nBASE VAULT RESUME — re-arm the demo brake\n{bar}")
@@ -82,6 +108,9 @@ def main() -> int:
         return 1
     if not paused:
         print("\nvault is ALREADY live — nothing to resume (idempotent no-op)")
+        # Machine-readable so the workflow can pass it to arm_v3_demo.py without
+        # scraping the prose above. Empty = no resume happened this run.
+        print("RESUME_TX=")
         return 0
 
     bal = w3.eth.get_balance(acct.address)
@@ -132,6 +161,7 @@ def main() -> int:
         print("FATAL: still paused after a successful resume()")
         return 1
     print(f"PASS — vault re-armed. https://sepolia.basescan.org/tx/{h.hex()}")
+    print(f"RESUME_TX={h.hex()}")
     return 0
 
 
