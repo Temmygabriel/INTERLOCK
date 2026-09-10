@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "network": "studio-dev",
+  "chain_id": 61997,
+  "genlayer_rpc": "https://studio-dev.genlayer.com/api",
+  "consensus": "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575",
+  "deployed_at": "2026-09-10T13:29:00Z",
+  "min_bond": 5,
+  "exploit_op_index": 0,
+  "genlayer": {
+    "demo_vault": "0x0a38c14029E1f60b2E3FFEcBaa5E4ad11a460b69",
+    "bridge_sender": "0xD7120c9ACA915E3A2d2768185e8e4b5C8aA29787",
+    "interlock_v3": "0xB4502c37FC60660c701e3e814A2CC079693E151f"
+  },
+  "base_sepolia": {
+    "chain_id": 84532,
+    "eid": 40245,
+    "rpc": "https://sepolia.base.org",
+    "explorer": "https://sepolia.basescan.org",
+    "vault": "0xCF3EfC03eb49F36f7a806FD39eDcDD3Db8EaB567",
+    "dispatcher": "0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5"
+  },
+  "zksync_sepolia": {
+    "chain_id": 300,
+    "rpc": "https://sepolia.era.zksync.dev",
+    "forwarder": "0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5"
+  }
+}
