@@ -437,3 +437,94 @@ boundary of the v3 demo and must be stated as such in the pitch.
 - Only one trip is demonstrated, and the vault is now permanently `paused`; a
   second live run needs a fresh vault (or `resume()` from the owner).
 - No Base Sepolia → GenLayer return path is exercised (v3 is one-directional).
+
+---
+
+## Phase 10 — browser write path PROVEN, and the relay made autonomous (2026-09-10)
+
+### Task #34 — the browser write path against `interlock_v3` (PASSED)
+
+This was the gating risk for the whole interactive design: the SDK path was
+proven in Phase 9, but a *browser* report had to produce a fee packet carrying
+the `send_message` emit allocation, and that was unverified.
+
+The test did not re-implement anything — it imported the real
+`frontend/gen.js` + `frontend/tx.js` in Node (ethers UMD in `globalThis.ethers`,
+exactly as `index.html` loads it) and drove them with a fresh random browser
+identity, mirroring `app.js submitReport()`:
+
+```
+preset.messageAllocations = [ { messageType: 1 (Internal), onAcceptance: false,
+  parentIndex: 2^256-1, recipient: 0xd7120c9a… (BridgeSender),
+  callKeyDecoded: "send_message", budget: 153453600002588 } ]
+```
+
+`ALLOCATION COUNT: 1` — the emit allocation is present. The broadcast then
+settled from a 0-balance browser key, the guard tripped (`reports=1`), and the
+outbox filled ~30 s later:
+
+```
+message hash : f9128ef616d63f07d74c1fbf05db5c59bfbf0942667be25386aaf97f6f69584f
+target_chain : 40245      target_contract: 0xCF3EfC03eb49F36f7a806FD39eDcDD3Db8EaB567
+```
+
+**The trap that makes this test easy to get wrong:** it MUST run against an
+UNTRIPPED trio. A tripped guard takes the `noop_already_tripped` branch, emits
+nothing, needs no allocation — and the identical test passes *vacuously*. A
+fresh trio (`demo_vault 0x0a38c140…`, `bridge_sender 0xD7120c9A…`,
+`interlock_v3 0xB4502c37…`) was deployed for exactly this reason, and
+`demo_vault.borrow(18)` pinned `audit[0]` at 98% coverage.
+
+### Task #35 — the always-on relay
+
+`v3-crosschain/genlayer/scripts/relay_ci.py` + `.github/workflows/relay-v3.yml`
+(cron `*/5`, plus dispatch). Every address comes from
+`frontend/demo-manifest.json`.
+
+**A real bug this fixed:** `relay_trip_v3.py` hardcoded the BridgeSender. After
+the fresh trio was deployed it silently read the *previous* trio's outbox and
+reported `already relayed? True` — while the current trio's message sat pending.
+Any hardcoded address in the relay is a latent "the relay is running but
+delivering nothing" failure, which looks identical to "no exploit yet". The
+manifest removes that class of bug.
+
+Runs deliberately **overlap** (300 s window against a 5-min cron, and no
+`concurrency` block — a group with `cancel-in-progress: false` would queue each
+run behind the previous one and destroy the overlap). Effective latency is
+~20-60 s, not 5 minutes. `isHashUsed` + the forwarder's `usedTxHash` make
+double-delivery safe across overlapping runs.
+
+Verified live, with this code, in one continuous sequence:
+
+| step | evidence |
+|---|---|
+| `resume_base_vault.py` | Base tx `b2283dc2…`, `GovernanceResumed`, `paused → false` |
+| `relay_ci.py` (window 120 s) | found `f9128ef6…` unrelayed, validated envelope, zkSync tx `c555118f…` |
+| delivery | `RemoteBridgeSent -> dstEid=40245` |
+| result | `BaseDemoVault.paused = TRUE`, `auditLen 3` |
+
+That is the **complete claimed path, with the browser as its origin**:
+browser identity → GenLayer validator consensus → `BridgeSender` outbox →
+CI relay → LayerZero V2 → `BaseDemoVault.paused = true`.
+
+**`resume()` re-arms the vault without redeploying it** (owner-only, records
+`governance_resume`, leaves the audit log intact — the previous trip's evidence
+stays on-chain). One gotcha: its read-back must POLL, because the
+load-balanced Base RPC answered from a replica lagging the receipt block and
+reported `paused = true` for a resume whose event had already fired.
+
+### Blocker: pushing `.github/workflows/`
+
+The GitHub credential in use (both the git credential helper and the `gh` CLI)
+carries only `gist`, `read:org`, `repo`. GitHub refuses to create or update any
+file under `.github/workflows/` without the `workflow` scope, so `relay-v3.yml`
+could not be pushed. The scripts and the manifest ARE pushed (`91f5478`, on
+`main` and `interlock-v3-crosschain`); the workflow file sits on disk awaiting
+`gh auth refresh -h github.com -s workflow`.
+
+### Still not done (do not overclaim)
+- The relay workflow has not yet run on GitHub — its send path is proven only
+  by the local run of the identical script.
+- The demo trio deployed this phase is now TRIPPED (the #34 test consumed it).
+  A fresh trio is still needed for the live demo.
+- No Base Sepolia → GenLayer return path is exercised (v3 is one-directional).
