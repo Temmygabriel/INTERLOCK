@@ -107,9 +107,13 @@
         <div>
           <p class="eyebrow">FIG. 1 — AUTONOMOUS SAFETY BREAKER</p>
           <h1 class="hero-title">INTERLOCK</h1>
-          <p class="hero-sub">Pause the exploit before governance can vote.
-            One report. One direction. <em>Consensus proves it, the breaker trips,
-            and its rulebook can never move a token.</em></p>
+          <p class="hero-sub">An autonomous circuit breaker that pauses a DeFi protocol
+            the moment an exploit is independently proven by GenLayer's validator
+            consensus — <em>and whose rulebook makes it structurally incapable of
+            ever moving a single token.</em></p>
+          <p class="hero-sub hero-sub-2">GenLayer proves it. The bridge carries it.
+            <strong>Base Sepolia pauses.</strong> No admin key, no governance vote,
+            no human in the loop.</p>
           <div class="pills">
             <span class="pill"><span class="x">✕</span> MOVE FUNDS</span>
             <span class="pill"><span class="x">✕</span> CHANGE OWNERSHIP</span>
@@ -119,7 +123,7 @@
           <p class="pill-caption">frozen at deployment · no setter exists for any of the above.</p>
           <p class="pill-caption">Its only token flows are a reporter's own bond: escrowed while a report is judged, returned to that reporter on a true report, or locked forever on a false one. It never routes funds anywhere else and never touches the vault's collateral.</p>
           <div class="hero-cta">
-            <a class="btn btn-primary" href="#watch">Watch it happen <span class="arr">→</span></a>
+            <a class="btn btn-primary" href="#crosschain">See it cross chains <span class="arr">→</span></a>
             <a class="btn btn-ghost" href="#try">Try it yourself <span class="arr">→</span></a>
           </div>
         </div>
@@ -136,6 +140,80 @@
           </div>
           <div class="sw-cap"><span class="state">CLOSED</span> — running</div>
         </div>
+      </div>
+    </section>
+
+    <!-- ════════════════ the v3 cross-chain pipeline (primary) ════════════════ -->
+    <section class="sec" id="crosschain" aria-label="the live cross-chain breaker">
+      <div class="wrap">
+        <p class="eyebrow">FIG. 2 — LIVE CROSS-CHAIN BREAKER</p>
+        <h2 class="sec-title">Three systems, one brake.</h2>
+        <p class="sec-sub">Every number below is read live: the guard and its evidence
+          vault from GenLayer, the destination vault straight from Base Sepolia. Nothing
+          on this page is a mock-up — if a stage shows nothing, that is the real state.</p>
+
+        <div class="xchain">
+          <!-- ── stage 1 · the guard ── -->
+          <article class="xstage" id="xstage1" data-state="wait">
+            <header class="xhead">
+              <span class="xnum">1</span>
+              <h3>GenLayer guard</h3>
+              <span class="xbadge" id="x1badge">connecting…</span>
+            </header>
+            <p class="xcopy">A bonded report pins one entry in the evidence vault's own
+              audit log. Validators independently re-classify that entry — the reporter's
+              word is never evidence.</p>
+            <dl class="xread">
+              <div><dt>breaker</dt><dd id="x1state">—</dd></div>
+              <div><dt>audit coverage</dt><dd id="x1coverage">—</dd></div>
+              <div><dt>reports judged</dt><dd id="x1reports">—</dd></div>
+              <div><dt>incidents</dt><dd id="x1incidents">—</dd></div>
+            </dl>
+            <div class="xact">
+              <button class="btn btn-primary" id="xReport" type="button" disabled>File a bonded report</button>
+              <p class="xmsg" id="xReportMsg">Reading the guard…</p>
+            </div>
+          </article>
+
+          <!-- ── stage 2 · the bridge ── -->
+          <article class="xstage" id="xstage2" data-state="wait">
+            <header class="xhead">
+              <span class="xnum">2</span>
+              <h3>Bridge</h3>
+              <span class="xbadge" id="x2badge">—</span>
+            </header>
+            <p class="xcopy">On a confirmed verdict the guard emits a narrowly-typed TRIP
+              message — it can send nothing else. A scheduled relay carries it across,
+              because the destination chain cannot read GenLayer consensus directly.</p>
+            <dl class="xread">
+              <div><dt>outbox</dt><dd id="x2outbox">—</dd></div>
+              <div><dt>message hash</dt><dd class="mono" id="x2hash">—</dd></div>
+              <div><dt>target</dt><dd id="x2target">—</dd></div>
+              <div><dt>relay</dt><dd id="x2relay">—</dd></div>
+            </dl>
+          </article>
+
+          <!-- ── stage 3 · the destination ── -->
+          <article class="xstage" id="xstage3" data-state="wait">
+            <header class="xhead">
+              <span class="xnum">3</span>
+              <h3>Base Sepolia vault</h3>
+              <span class="xbadge" id="x3badge">—</span>
+            </header>
+            <p class="xcopy">The vault that actually holds funds. It accepts exactly one
+              message type, from exactly one receiver — and its own audit log records the
+              trip.</p>
+            <dl class="xread">
+              <div><dt>paused</dt><dd id="x3paused">—</dd></div>
+              <div><dt>coverage</dt><dd id="x3coverage">—</dd></div>
+              <div><dt>audit entries</dt><dd id="x3audit">—</dd></div>
+              <div><dt>bridge receiver</dt><dd class="mono" id="x3receiver">—</dd></div>
+            </dl>
+            <p class="xmsg" id="x3link"></p>
+          </article>
+        </div>
+
+        <p class="xnote" id="xNote"></p>
       </div>
     </section>
 
@@ -163,10 +241,16 @@
       </div>
     </section>
 
-    <!-- ════════════════ the two demo paths ════════════════ -->
-    <section class="sec" aria-label="the two demo paths">
+    <!-- ════════════════ the same-chain reference build (demoted) ════════════════ -->
+    <section class="sec" aria-label="the same-chain reference build">
       <div class="wrap">
-        <p class="eyebrow">FIG. 2 — TWO WAYS TO WATCH</p>
+        <p class="eyebrow">FIG. 3 — THE SAME-CHAIN REFERENCE BUILD</p>
+        <h2 class="sec-title">Where this started: one chain, no bridge.</h2>
+        <p class="sec-sub">The single-chain build below is the direct predecessor — the
+          same bonded-report consensus and the same frozen rulebook, with the pause landing
+          on the vault's own chain instead of crossing to Base. It runs only when a
+          same-chain pair is configured for this deployment; the cross-chain stack above is
+          the product. <em>The sections below are the same-chain pair, not the v3 trio.</em></p>
         <div class="demo-grid">
 
           <!-- PATH A · watch -->
@@ -206,7 +290,7 @@
     <!-- ════════════════ live breaker instrument ════════════════ -->
     <section class="sec" aria-label="live breaker instrument">
       <div class="wrap">
-        <p class="eyebrow">FIG. 3 — LIVE BREAKER INSTRUMENT</p>
+        <p class="eyebrow">FIG. 4 — SAME-CHAIN INSTRUMENT</p>
         <h2 class="sec-title">The breaker, live.</h2>
         <p class="sec-sub">Everything below is read from the live contracts on
           studio-dev — real state, real validator verdicts, real history. Nothing is

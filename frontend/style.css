@@ -329,3 +329,82 @@ code.cmd {
   .log-row { grid-template-columns: 60px 60px 120px 1fr; }
   .l-time { display: none; }
 }
+
+/* ═════════════════ v3 cross-chain pipeline (FIG. 2, the primary panel) ═════════════
+   Three live stages side by side. `data-state` drives the accent so a stage can
+   never look "done" by accident: wait (unknown/not configured), live (reading),
+   done (the real thing happened), bad (a real failure). */
+.hero-sub-2 { font-size: 15px; color: var(--ink-muted); margin-top: -4px; max-width: 560px; }
+.hero-sub-2 strong { color: var(--ink); }
+
+.xchain {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+  margin: 0 0 18px;
+}
+.xstage {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 18px; box-shadow: var(--shadow); position: relative;
+  display: flex; flex-direction: column;
+  border-top: 3px solid var(--border);
+}
+.xstage[data-state="live"] { border-top-color: var(--hazard); }
+.xstage[data-state="done"] { border-top-color: var(--safe); }
+.xstage[data-state="bad"]  { border-top-color: var(--danger); }
+
+/* the connecting arrow between stages — direction is the whole point */
+.xstage:not(:last-child)::after {
+  content: "→"; position: absolute; right: -13px; top: 46px; z-index: 2;
+  font-size: 16px; color: var(--ink-faint);
+  background: var(--paper); border: 1px solid var(--border); border-radius: 999px;
+  width: 22px; height: 22px; line-height: 20px; text-align: center;
+}
+.xstage[data-state="done"]:not(:last-child)::after { color: var(--safe); border-color: var(--safe); }
+
+.xhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.xhead h3 { font-size: 15px; margin: 0; flex: 1; }
+.xnum {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  width: 20px; height: 20px; line-height: 20px; text-align: center;
+  border-radius: 999px; background: var(--ink); color: #fff; flex: none;
+}
+.xbadge {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border);
+  color: var(--ink-faint); background: var(--paper); white-space: nowrap;
+}
+.xstage[data-state="live"] .xbadge { color: var(--hazard); border-color: var(--hazard); }
+.xstage[data-state="done"] .xbadge { color: var(--safe); border-color: var(--safe); }
+.xstage[data-state="bad"]  .xbadge { color: var(--danger); border-color: var(--danger); }
+
+.xcopy { font-size: 12.5px; line-height: 1.5; margin: 0 0 12px; }
+
+.xread { margin: 0; display: grid; gap: 7px; }
+.xread > div { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.xread dt {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-faint); margin: 0; flex: none;
+}
+.xread dd {
+  margin: 0; font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+  color: var(--ink); text-align: right; word-break: break-all;
+}
+.xread dd.good { color: var(--safe); }
+.xread dd.bad  { color: var(--danger); }
+.xread dd.warn { color: var(--hazard); }
+
+.xact { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.xact .btn { width: 100%; justify-content: center; }
+.xmsg { font-family: var(--mono); font-size: 10.5px; line-height: 1.5; color: var(--ink-faint); margin: 9px 0 0; }
+.xmsg.good { color: var(--safe); }
+.xmsg.bad  { color: var(--danger); }
+
+.xnote {
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.6; color: var(--ink-faint);
+  border-left: 3px solid var(--border); padding: 8px 0 8px 12px; margin: 0;
+}
+.xnote strong { color: var(--ink-muted); }
+
+@media (max-width: 900px) {
+  .xchain { grid-template-columns: 1fr; }
+  .xstage:not(:last-child)::after { content: "↓"; right: auto; left: 50%; top: auto; bottom: -13px; }
+}

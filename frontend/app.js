@@ -12,6 +12,10 @@ import { read } from "./gen.js";
 import { ensureStudionet, sendWrite } from "./tx.js";
 import * as ID from "./identity.js";
 import { CONFIG } from "./config.js";
+import {
+  CC, ccConfigured, initCrossChain, readGuard, readEvidenceVault, readBridge, readBaseVault,
+  baseAddressUrl, baseTxUrl, targetEid,
+} from "./crosschain.js";
 
 // ----------------------------------------------------------------------------
 // Target pair (vault + its Interlock guard). Resolved from ./config.js, which
@@ -621,6 +625,12 @@ async function tick() {
     applyReadouts(armed);
     $("netline").textContent = "studio-dev · chain 61997 · " + PAIR_NAME + " · interlock " + INTERLOCK + " · vault " + VAULT;
 
+    // The cross-chain panel polls its own three systems (GenLayer guard, the
+    // BridgeSender outbox, Base Sepolia). It runs before the inFlight early
+    // return below so a judgment in progress never freezes the other chains'
+    // readouts, and a failure there never takes down the same-chain instrument.
+    await renderCrossChain().catch((e) => console.warn("[interlock] cross-chain panel:", e));
+
     if (inFlight) {
       // during judgment only the numbers refresh; the resolver drives the state
       return;
@@ -779,10 +789,246 @@ async function watchDemo() {
 }
 $("watchRun").addEventListener("click", watchDemo);
 
+// ════════════════════════════════════════════════════════════════════════════
+// v3 CROSS-CHAIN PANEL (FIG. 2) — the product.
+//
+// Three stages, each read from the system that actually owns the fact:
+//   1. GenLayer guard + evidence vault   (via gen.js → studio-dev)
+//   2. the BridgeSender outbox           (via gen.js → studio-dev)
+//   3. BaseDemoVault                     (via ethers → Base Sepolia, directly)
+//
+// Stage state is derived from real reads only. A stage is `done` when the thing
+// it describes has actually happened on-chain — never because a later stage
+// looks good. If a read fails it goes `bad` and says so.
+//
+// The report path here is deliberately separate from submitReport() below: that
+// one drives the same-chain instrument's DOM (#checklist / #verdict / #housing),
+// and pointing it at the v3 guard would hijack the wrong panel. This one writes
+// to the v3 guard and reports progress in its own card.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Evaluated lazily: under a plain static serve the manifest is fetched during
+// init(), so this is false until that resolves.
+const ccOn = () => ccConfigured();
+let xGuard = null, xEvidence = null, xBridge = null, xBase = null;
+let xBusy = false, xReading = false;
+
+function xStage(n, state, badge) {
+  const el = $("xstage" + n);
+  if (el) el.dataset.state = state;
+  const b = $("x" + n + "badge");
+  if (b) b.textContent = badge;
+}
+function xSet(id, text, cls) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = cls ?? "";
+}
+const shortHex = (h, n = 10) => {
+  const s = String(h ?? "");
+  return s.length > 2 * n + 2 ? s.slice(0, n + 2) + "…" + s.slice(-n) : s || "—";
+};
+
+async function renderCrossChain() {
+  if (!ccOn()) {
+    // No manifest → nothing to read. Say so rather than leaving three stages
+    // looking live-but-zero.
+    for (const n of [1, 2, 3]) xStage(n, "wait", "not configured");
+    const note = $("xNote");
+    if (note) note.innerHTML =
+      "This deployment has no <span class=\"mono\">demo-manifest.json</span>, so the cross-chain stack is not configured — the panel above cannot show live state.";
+    return;
+  }
+  if (xReading) return;
+  xReading = true;
+  try {
+    const [g, e, b, base] = await Promise.all([
+      readGuard(), readEvidenceVault(), readBridge(), readBaseVault(),
+    ]);
+    xGuard = g; xEvidence = e; xBridge = b; xBase = base;
+
+    // ---- stage 1 · the guard -------------------------------------------
+    if (!g.ok) {
+      xStage(1, "bad", "unreachable");
+      xSet("x1state", "—", ""); xSet("x1coverage", "—", ""); xSet("x1reports", "—", "");
+      xSet("x1incidents", "—", "");
+      $("xReportMsg").textContent = "Cannot reach the guard: " + clip(g.error, 120);
+      $("xReport").disabled = true;
+    } else {
+      const tripped = g.status.tripped === true;
+      const cov = num(e.ok ? e.params.coverage : NaN);
+      const covLow = Number.isFinite(cov) && cov < 100;
+      xStage(1, tripped ? "done" : (covLow ? "live" : "wait"),
+        tripped ? "tripped" : (covLow ? "exploit pinned" : "idle"));
+      xSet("x1state", tripped ? "TRIPPED" : "RUNNING", tripped ? "bad" : "good");
+      xSet("x1coverage", e.ok ? cov + "%" : "—", e.ok ? (covLow ? "bad" : "good") : "");
+      xSet("x1reports", big(g.status.report_count));
+      xSet("x1incidents", big(g.status.incident_count));
+      syncCrossChainButton();
+    }
+
+    // ---- stage 2 · the bridge ------------------------------------------
+    // The relay row reports only what this page can actually observe: an empty
+    // outbox is idle, a non-empty outbox with the destination still live is in
+    // flight, and a tripped destination is proof the message was carried. It
+    // never claims a scheduler is up — the browser cannot see that, and the
+    // note below says so plainly.
+    const delivered = xBase?.ok && xBase.paused === true;
+    if (!b.ok) {
+      xStage(2, "bad", "unreachable");
+      xSet("x2outbox", "—", ""); xSet("x2hash", "—", "");
+      xSet("x2relay", "—", "");
+    } else {
+      const queued = b.count;
+      xStage(2, queued ? "done" : (delivered ? "done" : (xGuard?.status?.tripped ? "live" : "wait")),
+        queued ? "queued" : (delivered ? "delivered" : "empty"));
+      xSet("x2outbox", queued ? queued + " message" + (queued === 1 ? "" : "s") : "empty",
+        queued ? "warn" : "");
+      // Show the outbox hash, not the envelope: the envelope is ABI-padded and
+      // truncates to "0x0000…0000", which tells a visitor nothing. The hash is
+      // the identifier the relay actually consumes.
+      xSet("x2hash", b.hashes?.length ? shortHex(b.hashes[0], 8) : "—");
+      xSet("x2relay", delivered ? "delivered" : (queued ? "carrying…" : "idle"),
+        delivered ? "good" : (queued ? "warn" : ""));
+    }
+    xSet("x2target", "chain " + (targetEid() || "—"));
+
+    // ---- stage 3 · the destination -------------------------------------
+    if (!base.ok) {
+      xStage(3, "bad", "rpc unreachable");
+      xSet("x3paused", "—", ""); xSet("x3coverage", "—", ""); xSet("x3audit", "—", "");
+      xSet("x3receiver", "—", "");
+      $("x3link").innerHTML =
+        "Base Sepolia read failed — " + clip(base.error, 110) +
+        " · <a href=\"" + baseAddressUrl(CC.base_sepolia.vault) + "\" target=\"_blank\" rel=\"noopener\">open on Basescan</a>";
+    } else {
+      xStage(3, base.paused ? "done" : (xBridge?.count ? "live" : "wait"),
+        base.paused ? "paused" : "live");
+      xSet("x3paused", base.paused ? "TRUE" : "false", base.paused ? "good" : "");
+      xSet("x3coverage", base.coverage + "%", base.coverage < 100 ? "bad" : "good");
+      xSet("x3audit", big(base.auditLen));
+      xSet("x3receiver", base.bridgeReceiver ? shortHex(base.bridgeReceiver, 6) : "—");
+      const v = CC.base_sepolia.vault;
+      $("x3link").innerHTML = base.tripTx
+        ? "Trip delivery: <a href=\"" + baseTxUrl(base.tripTx) + "\" target=\"_blank\" rel=\"noopener\">" +
+          shortHex(base.tripTx, 10) + "</a> · <a href=\"" + baseAddressUrl(v) + "\" target=\"_blank\" rel=\"noopener\">vault on Basescan</a>"
+        : "<a href=\"" + baseAddressUrl(v) + "\" target=\"_blank\" rel=\"noopener\">" + shortHex(v, 10) + " on Basescan</a>";
+    }
+
+    $("xNote").innerHTML =
+      "<strong>Trust boundary:</strong> the destination chain trusts the relay to carry a message " +
+      "that really came from confirmed GenLayer consensus — there is no independent finality proof " +
+      "binding the two chains. The relay is a standalone job that polls the BridgeSender outbox and " +
+      "forwards anything it finds unrelayed, so delivery takes tens of seconds to a few minutes " +
+      "rather than being instant. The guard is one-shot: once tripped it never un-trips, and re-arming " +
+      "the demo means governance <span class=\"mono\">resume()</span> on Base plus a fresh guard.";
+  } finally {
+    xReading = false;
+  }
+}
+
+function syncCrossChainButton() {
+  const btn = $("xReport"), msg = $("xReportMsg");
+  if (!btn) return;
+  if (xBusy) { btn.disabled = true; return; }
+  const tripped = xGuard?.ok && xGuard.status.tripped === true;
+  const hasEntry = xEvidence?.ok && num(xEvidence.params.audit_len) > 0;
+  if (!ccOn()) { btn.disabled = true; msg.textContent = "Cross-chain stack not configured."; return; }
+  if (tripped) {
+    btn.disabled = true;
+    msg.textContent = "This guard has already tripped — it is one-shot, and cannot be un-tripped. Re-arming the demo takes a fresh guard.";
+    return;
+  }
+  if (!hasEntry) {
+    btn.disabled = true;
+    msg.textContent = "The evidence vault has no audit entries yet — there is nothing to report.";
+    return;
+  }
+  btn.disabled = false;
+  const cov = num(xEvidence.params.coverage);
+  const bond = num(xGuard?.status?.min_bond ?? 0);
+  msg.textContent = (cov < 100
+    ? "Entry #" + (num(xEvidence.params.audit_len) - 1) + " is pinned at " + cov + "% coverage. "
+    : "The vault is healthy (" + cov + "% coverage) — a report now would be judged a false report. ") +
+    "A report costs a " + bond + " GEN bond, judged by validators.";
+  msg.className = "xmsg";
+}
+
+// File a real bonded report against the v3 guard. Unlike submitReport() this
+// never touches the same-chain instrument's DOM, and it follows the whole
+// cross-chain chain of custody afterwards: verdict -> outbox -> Base pause.
+async function reportCrossChain() {
+  if (xBusy || !ccOn()) return;
+  let id = ID.loadIdentity();
+  if (!id) { ID.createIdentity(); renderIdentity(); id = ID.loadIdentity(); }
+
+  const idx = num(xEvidence?.params?.audit_len) - 1;
+  const bond = BigInt(num(xGuard?.status?.min_bond ?? 0));
+  if (idx < 0 || bond <= 0n) { $("xReportMsg").textContent = "Nothing to report."; return; }
+
+  xBusy = true;
+  syncCrossChainButton();
+  const msg = $("xReportMsg");
+  msg.className = "xmsg";
+  msg.textContent = "Step 1/3 — signing a bonded report on entry #" + idx + " with the browser identity…";
+
+  let tx;
+  try {
+    tx = await sendWrite(ID.signer(), CC.genlayer.interlock_v3, "report_exploit", [idx], { value: bond });
+  } catch (e) {
+    msg.className = "xmsg bad";
+    msg.textContent = "The report failed to broadcast: " + clip(e?.message ?? e, 110);
+    xBusy = false;
+    syncCrossChainButton();
+    return;
+  }
+  msg.textContent = "Step 2/3 — report broadcast (" + shortHex(tx, 8) + "). Validators are re-classifying the pinned entry…";
+
+  // Wait for the guard to actually trip. Consensus can take minutes; the panel
+  // keeps polling and the other stages update on their own tick.
+  const deadline = Date.now() + judgeTimeoutMs;
+  let done = false;
+  while (Date.now() < deadline) {
+    await sleep(pollMs);
+    await renderCrossChain().catch((e) => console.warn("[interlock] cross-chain panel:", e));
+    if (xGuard?.ok && xGuard.status.tripped === true) { done = true; break; }
+  }
+  xBusy = false;
+  if (!done) {
+    msg.className = "xmsg bad";
+    msg.textContent = "No confirmed verdict within the window — the report may still be judging. Watch the stages above.";
+    syncCrossChainButton();
+    return;
+  }
+
+  msg.className = "xmsg good";
+  msg.textContent = "Step 3/3 — consensus CONFIRMED the exploit and the guard tripped. The TRIP message is queued; the scheduled relay carries it to Base Sepolia. Stage 3 flips to PAUSED once it lands — no further action from you.";
+
+  // Follow the relay hop to the destination, so the page shows the pause
+  // happening rather than just asserting it will.
+  const relayDeadline = Date.now() + 15 * 60_000;
+  while (Date.now() < relayDeadline) {
+    await sleep(10_000);
+    await renderCrossChain().catch((e) => console.warn("[interlock] cross-chain panel:", e));
+    if (xBase?.ok && xBase.paused === true) {
+      msg.textContent = "DONE — the exploit was proven on GenLayer and the vault on Base Sepolia is now PAUSED. The whole path ran without a human in the loop.";
+      break;
+    }
+  }
+  syncCrossChainButton();
+}
+if ($("xReport")) $("xReport").addEventListener("click", reportCrossChain);
+
 (async function init() {
   wireIdentity();
   if (!ID.loadIdentity()) { ID.createIdentity(); } // frictionless default signer
   renderIdentity();
+
+  // Resolve the cross-chain manifest before the first paint. Under Vercel,
+  // build.mjs already baked it into config.js and this is an immediate no-op;
+  // served straight from frontend/ it fetches demo-manifest.json.
+  await initCrossChain().catch(() => {});
 
   $("reportMsg").textContent = "Contacting studio-dev…";
   setState("running");

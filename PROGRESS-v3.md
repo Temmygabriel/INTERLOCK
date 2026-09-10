@@ -528,3 +528,57 @@ could not be pushed. The scripts and the manifest ARE pushed (`91f5478`, on
 - The demo trio deployed this phase is now TRIPPED (the #34 test consumed it).
   A fresh trio is still needed for the live demo.
 - No Base Sepolia → GenLayer return path is exercised (v3 is one-directional).
+
+## Phase 11 — the page becomes the v3 product (2026-09-10)
+
+Task #37. `main` now deploys a page whose PRIMARY section is the cross-chain
+breaker; the same-chain instrument is demoted to FIG. 3 / FIG. 4 below it.
+
+### What changed
+- `frontend/crosschain.js` (new) — reads all three systems: guard `status()` +
+  latest incident, the `BridgeSender` outbox, and `BaseDemoVault` on Base Sepolia
+  read straight from the page with ethers (the public Base RPCs send
+  `Access-Control-Allow-Origin: *`, so no proxy). Reads never throw: every
+  failure returns `{ok:false, error}` and the panel says what is actually wrong.
+- `frontend/index.html` — hero rewritten around the mandated pitch; new FIG. 2
+  `#crosschain` section, three live stages with ids `#xstage1..3`.
+- `frontend/style.css` — `.xchain`/`.xstage` grid, `data-state` accents.
+- `frontend/build.mjs` + `frontend/config.js` — the primary pair now points at
+  the v3 trio; the 8+ cross-chain addresses come from
+  `frontend/demo-manifest.json`, baked at build. **No Vercel env var needed
+  renaming — only its value.**
+
+### Two design corrections made while building this
+1. **`config.js` claimed a plain static serve would resolve the cross-chain
+   panel. It did not** — the manifest only reached the page when `build.mjs`
+   ran, so serving `frontend/` directly rendered "not configured".
+   `initCrossChain()` now fetches `demo-manifest.json` at runtime when the build
+   step did not bake it. One source of truth, both paths work.
+2. **The relay row asserted "scheduled workflow"** while `relay-v3.yml` is still
+   unpushable (no `workflow` scope). That is exactly the unverified claim the
+   task-#21 discipline forbids. The row now reports only what the page can
+   observe: `idle` / `carrying…` / `delivered`, and `#xNote` describes the trust
+   boundary and the relay's real latency without asserting a deployment.
+
+### Verification (headless, against live networks)
+`xchain_render_test.mjs` stands up a fake DOM, imports the REAL built
+`dist/app.js`, and lets `init() → tick() → renderCrossChain()` run:
+
+| stage | readout | value |
+|---|---|---|
+| 1 | breaker / coverage / reports / incidents | TRIPPED / 98% / 1 / 1 |
+| 2 | outbox / message hash / target / relay | 1 message / `f9128ef6…` / chain 40245 / delivered |
+| 3 | paused / coverage / audit / receiver | TRUE / 142% / 3 / `0x1567e6…` |
+
+No blank readouts; stage 3's link resolves to the real LayerZero delivery tx
+`0xe4494091…`. The same-chain instrument still renders underneath.
+
+**Caveats:** this proves the panel paints real state and never throws. It does
+NOT prove layout or CSS — that needs a browser. And it ran against the already
+TRIPPED trio, so the *interactive* report path (`reportCrossChain`) still has no
+live run; the write it performs is the one proven in Phase 10.
+
+### A caught bug worth keeping
+`await renderCrossChain().catch(() => {})` swallowed every failure, so a broken
+panel rendered as silent blanks. It now logs via `console.warn` — which is how
+the harness caught that `applyReadouts` was throwing in a stub DOM.
