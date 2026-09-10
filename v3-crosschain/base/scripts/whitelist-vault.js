@@ -23,6 +23,21 @@
 require("dotenv").config();
 const { ethers } = require("hardhat");
 
+/// Reads against a load-balanced public RPC can lag (a read issued right after a
+/// tx can hit a node that has not indexed the block yet). Retry briefly so a
+/// transient miss never fails an otherwise-good wiring run.
+async function retryRead(fn, label, attempts = 5) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      console.log(`${label} read attempt ${i} failed: ${e.shortMessage || e.message}`);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  throw new Error(`${label} read failed after ${attempts} attempts`);
+}
+
 async function main() {
   const dispatcherAddr = process.env.DISPATCHER_ADDRESS;
   const vaultAddr = process.env.BASEDEMOVAULT_ADDRESS;
@@ -43,7 +58,7 @@ async function main() {
 
   const dispatcher = await ethers.getContractAt("BaseTripDispatcher", dispatcherAddr, signer);
 
-  const owner = await dispatcher.owner();
+  const owner = await retryRead(() => dispatcher.owner(), "owner()");
   if (owner.toLowerCase() !== signer.address.toLowerCase()) {
     throw new Error(`Dispatcher owner is ${owner}, not signer ${signer.address} — cannot setTrustedTarget`);
   }
@@ -54,7 +69,7 @@ async function main() {
   console.log("setTrustedTarget TX:", tx.hash);
   await tx.wait();
 
-  const trusted = await dispatcher.trustedTargets(vaultAddr);
+  const trusted = await retryRead(() => dispatcher.trustedTargets(vaultAddr), "trustedTargets(vault)");
   console.log("trustedTargets(vault):", trusted);
   if (!trusted) {
     throw new Error("setTrustedTarget did not stick — trustedTargets(vault) is false");

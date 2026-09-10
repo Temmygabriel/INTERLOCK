@@ -57,15 +57,31 @@ async function main() {
   const address = await vault.getAddress();
   console.log("BaseDemoVault deployed to:", address);
 
-  const p = await vault.params();
-  console.log("Genesis params:", {
-    owner: p.owner_,
-    bridgeReceiver: p.bridgeReceiver_,
-    collateral: p.collateral_.toString(),
-    debt: p.debt_.toString(),
-    coverage: p.coverage_.toString(),
-    paused: p.paused_,
-  });
+  // Informational only. Public RPCs (sepolia.base.org) are load-balanced and the
+  // node serving this call can lag the just-mined deploy block, returning "0x"
+  // (ethers BAD_DATA). Retry briefly, then warn — this read must NEVER fail the
+  // deploy, whose address is already logged above.
+  let p = null;
+  for (let attempt = 1; attempt <= 5 && !p; attempt++) {
+    try {
+      p = await vault.params();
+    } catch (e) {
+      console.log(`params() read attempt ${attempt} failed: ${e.shortMessage || e.message}`);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  if (p) {
+    console.log("Genesis params:", {
+      owner: p.owner_,
+      bridgeReceiver: p.bridgeReceiver_,
+      collateral: p.collateral_.toString(),
+      debt: p.debt_.toString(),
+      coverage: p.coverage_.toString(),
+      paused: p.paused_,
+    });
+  } else {
+    console.log("WARN: could not read params() after retries (RPC lag); deploy itself succeeded.");
+  }
 
   console.log("\nNext steps:");
   console.log("  1. On the zkSync Era BridgeForwarder, register this vault's dispatcher:");

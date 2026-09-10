@@ -11,6 +11,15 @@ name: deploy-v3-evm
 # and then links them: dispatcher.trustedForwarder=forwarder,
 # dispatcher.trustedTarget=vault, forwarder.bridgeAddresses[40245]=dispatcher.
 #
+# MODES
+#   mode=deploy    (default) full fresh deploy + wiring, as above.
+#   mode=configure skips the three deploy steps and replays ONLY the two wiring
+#                  steps against already-deployed contracts supplied via
+#                  forwarder_address / dispatcher_address / vault_address. Use
+#                  this to finish or repair wiring after a deploy (e.g. a
+#                  post-deploy RPC-lag read failed) without orphaning good
+#                  contracts or spending more deploy gas.
+#
 # Secrets required (repo-level):
 #   V3_DEPLOYER_KEY  deployer EOA privkey — funded on Base Sepolia + zkSync Sepolia
 #   V3_RELAY_KEY     relay EOA privkey (only its ADDRESS is needed here: it is the
@@ -20,8 +29,24 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type "deploy" to confirm a live testnet deploy (burns gas)'
+        description: 'Type "deploy" to confirm a live testnet run (burns gas)'
         required: true
+        default: ''
+      mode:
+        description: 'deploy = fresh deploy + wiring | configure = wire existing contracts only'
+        required: false
+        default: 'deploy'
+      forwarder_address:
+        description: 'configure mode: existing zkSync BridgeForwarder address'
+        required: false
+        default: ''
+      dispatcher_address:
+        description: 'configure mode: existing BaseTripDispatcher address'
+        required: false
+        default: ''
+      vault_address:
+        description: 'configure mode: existing BaseDemoVault address'
+        required: false
         default: ''
 
 concurrency:
@@ -89,6 +114,7 @@ jobs:
 
       # ---- 2. zkSync Era Sepolia: BridgeForwarder -------------------------
       - name: Deploy BridgeForwarder (zkSync Sepolia)
+        if: github.event.inputs.mode != 'configure'
         working-directory: v3-crosschain/boilerplate/smart-contracts
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
@@ -111,6 +137,7 @@ jobs:
 
       # ---- 3. Base Sepolia: BaseTripDispatcher (trusts the forwarder) -----
       - name: Deploy BaseTripDispatcher (Base Sepolia)
+        if: github.event.inputs.mode != 'configure'
         working-directory: v3-crosschain/base
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
@@ -134,6 +161,7 @@ jobs:
 
       # ---- 4. Base Sepolia: BaseDemoVault, bridged by the dispatcher ------
       - name: Deploy BaseDemoVault (Base Sepolia)
+        if: github.event.inputs.mode != 'configure'
         working-directory: v3-crosschain/base
         env:
           PRIVATE_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
@@ -154,6 +182,25 @@ jobs:
           fi
           echo "VAULT=$VAULT" >> "$GITHUB_ENV"
           echo "VAULT=$VAULT"
+
+      # ---- 4b. Configure mode: seed the three addresses from inputs --------
+      - name: Seed addresses (configure mode)
+        if: github.event.inputs.mode == 'configure'
+        env:
+          IN_FORWARDER: ${{ github.event.inputs.forwarder_address }}
+          IN_DISPATCHER: ${{ github.event.inputs.dispatcher_address }}
+          IN_VAULT: ${{ github.event.inputs.vault_address }}
+        run: |
+          set -euo pipefail
+          for pair in "FORWARDER:$IN_FORWARDER" "DISPATCHER:$IN_DISPATCHER" "VAULT:$IN_VAULT"; do
+            name="${pair%%:*}"; val="${pair#*:}"
+            if ! printf '%s' "$val" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
+              echo "::error::configure mode requires a valid $name address (got '$val')"
+              exit 1
+            fi
+            echo "$name=$val" >> "$GITHUB_ENV"
+            echo "$name=$val"
+          done
 
       # ---- 5. Whitelist the vault on the dispatcher ------------------------
       - name: Whitelist vault on dispatcher (Base Sepolia)
@@ -179,7 +226,7 @@ jobs:
       - name: Post-run summary
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## v3 EVM leg deployed (testnet)
+          ## v3 EVM leg (testnet) — mode: ${{ github.event.inputs.mode }}
 
           | Role | Chain | Address |
           |------|-------|---------|
