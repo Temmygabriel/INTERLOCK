@@ -4,13 +4,13 @@
   "chain_id": 61997,
   "genlayer_rpc": "https://studio-dev.genlayer.com/api",
   "consensus": "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575",
-  "deployed_at": "2026-09-10T13:29:00Z",
+  "deployed_at": "2026-09-10T22:50:15Z",
   "min_bond": 5,
   "exploit_op_index": 0,
   "genlayer": {
-    "demo_vault": "0x0a38c14029E1f60b2E3FFEcBaa5E4ad11a460b69",
-    "bridge_sender": "0xD7120c9ACA915E3A2d2768185e8e4b5C8aA29787",
-    "interlock_v3": "0xB4502c37FC60660c701e3e814A2CC079693E151f"
+    "demo_vault": "0x35ce13653edd7862348A4cAF446F53ECC2654049",
+    "bridge_sender": "0xDf6041aC7Cf024F7903867C4Fcc8391Cf37fec4E",
+    "interlock_v3": "0x198b4f9D7d226a59592a17dc39c8D4Af15f3c0Bb"
   },
   "base_sepolia": {
     "chain_id": 84532,
@@ -18,7 +18,9 @@
     "rpc": "https://sepolia.base.org",
     "explorer": "https://sepolia.basescan.org",
     "vault": "0xCF3EfC03eb49F36f7a806FD39eDcDD3Db8EaB567",
-    "dispatcher": "0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5"
+    "dispatcher": "0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5",
+    "vault_armed_at": "2026-09-10T22:40:00Z",
+    "resume_tx": "0x819e256069ea291e484414e55395e275eda160c9a86f3ad2e19f08edfdb954c4"
   },
   "zksync_sepolia": {
     "chain_id": 300,

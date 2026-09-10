@@ -90,6 +90,15 @@ const config = {
       process.exit(1);
     }
     config.crosschain = manifest;
+
+    // The PRIMARY pair is the v3 stack's GenLayer leg, and the manifest is its
+    // source of truth. A demo reset rewrites demo-manifest.json and commits it;
+    // resolving the pair from there (rather than from the committed defaults in
+    // config.js, which go stale the moment a trio is redeployed) means the reset
+    // needs no Vercel dashboard edit at all. The env vars stay as overrides for
+    // the case where someone wants to point the page somewhere else.
+    config.interlock = resolveVar("INTERLOCK_ADDRESS", manifest.genlayer.interlock_v3);
+    config.vault = resolveVar("VAULT_ADDRESS", manifest.genlayer.demo_vault);
   } else {
     console.warn("[build] no frontend/demo-manifest.json — the cross-chain panel will render as unconfigured.");
     config.crosschain = null;

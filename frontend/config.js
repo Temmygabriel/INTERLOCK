@@ -12,13 +12,15 @@
 //      bare build still points at the deployed demo.
 //
 // THE PIVOT (2026-09-10): v3 IS the product. The primary pair below is the v3
-// CROSS-CHAIN stack's GenLayer leg, and it rides the SAME env var names the
-// same-chain build used — INTERLOCK_ADDRESS = interlock_v3, VAULT_ADDRESS = its
-// evidence vault. Nothing in the Vercel dashboard needs renaming; only the two
-// values change. The cross-chain addresses (bridge sender, Base vault,
-// dispatcher, EIDs) are NOT env vars: they come from demo-manifest.json via
-// build.mjs, because there are too many of them and they all move together
-// whenever the demo is reset.
+// CROSS-CHAIN stack's GenLayer leg. Under `node build.mjs` these two values are
+// resolved from frontend/demo-manifest.json — the manifest is the source of
+// truth, so a demo reset is one committed file and never a dashboard edit. The
+// defaults here are only what a build with no manifest falls back to, so they
+// name the most recent live trio.
+//
+// The 8+ cross-chain addresses (bridge sender, Base vault, dispatcher, EIDs)
+// always come from demo-manifest.json via build.mjs — there are too many of
+// them to express as env vars, and they all move together on every reset.
 //
 // IMPORTANT — studio-dev (chain 61997) resolves contracts by the EXACT address
 // string (case-sensitive). Copy deployed addresses verbatim; never change case.
@@ -26,11 +28,11 @@
 export const CONFIG = {
   // GenLayer guard (interlock_v3) — validator consensus, bonded reports, and the
   // TRIP emission. This is the v3 stack, not the same-chain interlock.py.
-  interlock: "0xB4502c37FC60660c701e3e814A2CC079693E151f",
+  interlock: "0x198b4f9D7d226a59592a17dc39c8D4Af15f3c0Bb",
   // The evidence vault on GenLayer: the under-collateralized borrow that
   // consensus classifies lives in ITS audit log. It is NOT the vault that gets
   // paused — the pause happens on Base Sepolia (see demo-manifest.json).
-  vault: "0x0a38c14029E1f60b2E3FFEcBaa5E4ad11a460b69",
+  vault: "0x35ce13653edd7862348A4cAF446F53ECC2654049",
 
   // Populated by build.mjs from demo-manifest.json. Listed here so a plain
   // static serve (no build step) still resolves the cross-chain panel.
