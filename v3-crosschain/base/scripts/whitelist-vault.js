@@ -69,10 +69,21 @@ async function main() {
   console.log("setTrustedTarget TX:", tx.hash);
   await tx.wait();
 
-  const trusted = await retryRead(() => dispatcher.trustedTargets(vaultAddr), "trustedTargets(vault)");
+  // Poll until the mapping reflects the write. A load-balanced public RPC can
+  // serve this read from a node that has not indexed the tx yet, returning a
+  // stale `false` — that is "not yet", not "did not stick". (Observed in CI:
+  // the tx succeeded and TrustedTargetSet fired, but an immediate read raced it.)
+  let trusted = false;
+  for (let i = 1; i <= 10 && !trusted; i++) {
+    trusted = await dispatcher.trustedTargets(vaultAddr);
+    if (!trusted) {
+      console.log(`trustedTargets(vault) false on attempt ${i}/10 — waiting for RPC to catch up`);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
   console.log("trustedTargets(vault):", trusted);
   if (!trusted) {
-    throw new Error("setTrustedTarget did not stick — trustedTargets(vault) is false");
+    throw new Error("setTrustedTarget did not stick after 10 reads — trustedTargets(vault) is false");
   }
 
   console.log("PASS — vault whitelisted on dispatcher.");
