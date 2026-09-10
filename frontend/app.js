@@ -811,7 +811,7 @@ $("watchRun").addEventListener("click", watchDemo);
 // init(), so this is false until that resolves.
 const ccOn = () => ccConfigured();
 let xGuard = null, xEvidence = null, xBridge = null, xBase = null;
-let xBusy = false, xReading = false;
+let xBusy = false, xReading = false, xReported = false;
 
 function xStage(n, state, badge) {
   const el = $("xstage" + n);
@@ -931,7 +931,13 @@ async function renderCrossChain() {
 function syncCrossChainButton() {
   const btn = $("xReport"), msg = $("xReportMsg");
   if (!btn) return;
-  if (xBusy) { btn.disabled = true; return; }
+  // While a report is in flight — and for the rest of the session once one has
+  // been confirmed — the flow owns this message, not this function. Without
+  // this the poll loop overwrites the outcome with the generic "already
+  // tripped" line the instant the guard trips, so a visitor who just
+  // successfully tripped the breaker is told it was already tripped and reads
+  // their own success as a refusal.
+  if (xBusy || xReported) { btn.disabled = true; return; }
   const tripped = xGuard?.ok && xGuard.status.tripped === true;
   const hasEntry = xEvidence?.ok && num(xEvidence.params.audit_len) > 0;
   if (!ccOn()) { btn.disabled = true; msg.textContent = "Cross-chain stack not configured."; return; }
@@ -994,28 +1000,41 @@ async function reportCrossChain() {
     await renderCrossChain().catch((e) => console.warn("[interlock] cross-chain panel:", e));
     if (xGuard?.ok && xGuard.status.tripped === true) { done = true; break; }
   }
-  xBusy = false;
   if (!done) {
+    xBusy = false;
+    // "Still judging" and "judged false" are different outcomes and must not
+    // read the same — a visitor whose report consensus REJECTED should be told
+    // that, not left waiting for a verdict that already arrived.
+    const effect = String(xGuard?.incident?.effect ?? "");
     msg.className = "xmsg bad";
-    msg.textContent = "No confirmed verdict within the window — the report may still be judging. Watch the stages above.";
+    msg.textContent = effect === "noop_false_report"
+      ? "Validators judged this report FALSE — the entry is not an exploit, so the breaker correctly refused to trip. A false report is what the bond is there to deter."
+      : "No confirmed verdict within the window — the report may still be judging. Watch the stages above.";
     syncCrossChainButton();
     return;
   }
 
+  // The visitor's action is not finished until the message has landed or the
+  // window closes, so stay busy through the relay wait — that keeps
+  // syncCrossChainButton from overwriting the outcome line below.
+  xReported = true;
   msg.className = "xmsg good";
-  msg.textContent = "Step 3/3 — consensus CONFIRMED the exploit and the guard tripped. The TRIP message is queued; the scheduled relay carries it to Base Sepolia. Stage 3 flips to PAUSED once it lands — no further action from you.";
+  msg.textContent = "Step 3/3 — consensus CONFIRMED the exploit and the guard tripped. The TRIP message is queued; the relay carries it to Base Sepolia. Stage 3 flips to PAUSED once it lands — no further action from you.";
 
   // Follow the relay hop to the destination, so the page shows the pause
   // happening rather than just asserting it will.
   const relayDeadline = Date.now() + 15 * 60_000;
+  let landed = false;
   while (Date.now() < relayDeadline) {
     await sleep(10_000);
     await renderCrossChain().catch((e) => console.warn("[interlock] cross-chain panel:", e));
-    if (xBase?.ok && xBase.paused === true) {
-      msg.textContent = "DONE — the exploit was proven on GenLayer and the vault on Base Sepolia is now PAUSED. The whole path ran without a human in the loop.";
-      break;
-    }
+    if (xBase?.ok && xBase.paused === true) { landed = true; break; }
   }
+  msg.className = landed ? "xmsg good" : "xmsg";
+  msg.textContent = landed
+    ? "DONE — the exploit was proven on GenLayer and the vault on Base Sepolia is now PAUSED. The whole path ran without a human in the loop."
+    : "Consensus confirmed the exploit and the TRIP message is queued. The relay is still carrying it — watch stage 3 above; it flips to PAUSED when the message lands.";
+  xBusy = false;
   syncCrossChainButton();
 }
 if ($("xReport")) $("xReport").addEventListener("click", reportCrossChain);

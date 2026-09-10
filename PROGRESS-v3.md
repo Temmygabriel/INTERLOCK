@@ -582,3 +582,97 @@ live run; the write it performs is the one proven in Phase 10.
 `await renderCrossChain().catch(() => {})` swallowed every failure, so a broken
 panel rendered as silent blanks. It now logs via `console.warn` — which is how
 the harness caught that `applyReadouts` was throwing in a stub DOM.
+
+## Phase 12 — the visitor path, proven and then corrected (2026-09-11)
+
+Task #36 + the last untested piece of #37. The page is armed and the report
+button has now been driven end to end.
+
+### The demo is interactive again
+The trio from Phase 10/11 was consumed by the browser-write test and the Base
+vault was left paused, so the page had nothing to offer a visitor. Both halves
+re-armed:
+
+| | |
+|---|---|
+| Base Sepolia | `resume()` tx `0x819e2560…`, vault live (auditLen 4) |
+| GenLayer | fresh `demo_vault 0x35ce1365…`, `BridgeSender 0xDf6041aC…`, `interlock_v3 0x198b4f9D…` |
+| exploit | `borrow(18)` → audit[0], coverage 98% |
+
+Confirmed armed at the end of the session: `tripped=False, report_count=0,
+incident_count=0, audit_len=1, coverage=98%, outbox=0`. **All testing since has
+run against throwaway trios, so the armed trio is untouched.**
+
+`build.mjs` now resolves the PRIMARY pair from `demo-manifest.json` instead of
+the committed `config.js` defaults. Those defaults go stale on every redeploy,
+so resolving from them meant each reset also needed a Vercel dashboard edit.
+The manifest is now the one file a reset rewrites and the one file to commit.
+
+### The visitor path, clicked for real
+`xchain_click_test.mjs` records the click handler app.js wires to `#xReport`
+and invokes it, so this is the real handler, real bonded write, real consensus:
+
+```
+[+  6s] stage1="RUNNING" badge="exploit pinned"  #xReport disabled=false
+[+  6s] CLICKING #xReport
+[+ 11s] Step 1/3 — signing a bonded report on entry #0 …
+[+ 21s] Step 2/3 — report broadcast (0x0e81ef01…) …
+[+ 31s] Step 3/3 — consensus CONFIRMED the exploit and the guard tripped.
+FINAL  stage1=done/tripped/reports=1/incidents=1
+       stage2=done/queued/1 message/hash c6ca01fb…/relay=carrying…
+       stage3=live/paused=false   #xReport disabled=true
+```
+
+Consensus took **~10 s**. Stage 2 reading `carrying…` with stage 3 still `live`
+is correct and honest — the message is queued and nothing has relayed it.
+
+### Two bugs the click test found
+1. **The outcome line was clobbered.** `syncCrossChainButton()` runs on every
+   poll, so the instant the guard tripped it overwrote "consensus CONFIRMED the
+   exploit" with the generic "this guard has already tripped — re-arming takes a
+   fresh guard". A visitor who had just successfully tripped the breaker was
+   told it was already tripped and would read their own success as a refusal.
+   Fixed with an `xReported` latch plus holding `xBusy` across the relay wait.
+   Verified: the line survives 75 s of polling after the trip.
+2. **"Still judging" and "judged false" read identically.** A report consensus
+   REJECTS (`effect: noop_false_report`) fell into the same timeout branch as a
+   verdict that had not arrived. The branch now distinguishes them.
+
+### Also
+- `resume_base_vault.py` called `time.sleep` without importing `time`, so a
+  SUCCESSFUL resume threw `NameError` during its own confirmation read and
+  reported failure for work that had succeeded. Fixed.
+- `deploy-v3-evm.yml`'s checkout `ref:` moved `interlock-v3-crosschain` → `main`.
+  **This edit is on disk but cannot be committed or pushed** — see below.
+- `relay_ci.py --once` run against the armed manifest: reads the new addresses,
+  finds the outbox clear, exits 0. The CI no-op path is proven; the send path is
+  still only proven by the local run of the identical script.
+
+### Still not done (do not overclaim)
+- **The relay is not running anywhere.** Nothing carries a queued message to
+  Base, so a visitor's report trips GenLayer and stage 3 never flips. The
+  workflow is written but unpushable without the GitHub `workflow` scope.
+- Layout/CSS of the cross-chain panel has never been seen in a browser — the
+  headless harness proves state, not pixels.
+
+### The `workflow` scope blocks more than the workflows
+The credential GitHub has here carries `gist`, `read:org` and `repo` — but not
+`workflow`. GitHub refuses any push whose commits touch a path under
+`.github/workflows/`, and it refuses the **whole push**, not just that path:
+
+```
+! [remote rejected] HEAD -> main (refusing to allow an OAuth App to create or
+  update workflow `.github/workflows/deploy-v3-evm.yml` without `workflow` scope)
+```
+
+The first attempt at this commit bundled the one-line `deploy-v3-evm.yml` `ref:`
+change with the app.js fix, so a trivial workflow edit silently made the frontend
+fix unpushable too. Split apart: the app.js fix and this file push normally, and
+the workflow edit sits uncommitted on disk. Anything destined for
+`.github/workflows/` must stay out of commits until `gh auth refresh -h
+github.com -s workflow` has been run.
+
+**Uncommitted, on disk only:** `.github/workflows/deploy-v3-evm.yml` (ref →
+main), `.github/workflows/relay-v3.yml` (untracked), and the two reset workflows
+still to be written.
+
