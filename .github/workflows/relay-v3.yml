@@ -1,5 +1,9 @@
 name: relay-v3
 
+# Re-registration kick, 2026-09-11: the `*/5` schedule produced no runs for ~65
+# min after this file first landed on main (0 schedule-event runs repo-wide).
+# This comment-only change forces GitHub to re-evaluate the cron.
+#
 # The always-on relay hop. This is what makes the Interlock claim "autonomous"
 # rather than "a script a human runs": once GenLayer validator consensus has
 # confirmed an exploit, the TRIP message sitting in the BridgeSender outbox has
