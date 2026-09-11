@@ -304,6 +304,8 @@ verifier can still see it.
 ## 10. Further reading
 
 - `interlock-build-spec.md` — the specification this was built against
+- `SUBMISSION-ANSWERS.md` — copy-paste answers for the application form, drawn from this
+  README so the repo and the form never disagree
 - `PROGRESS.md` / `PROGRESS-v3.md` — the engineering logs, including failure modes and
   bugs found by testing, kept because the record of what broke is more useful than a
   claim that nothing did

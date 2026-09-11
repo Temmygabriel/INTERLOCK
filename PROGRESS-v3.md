@@ -828,3 +828,75 @@ was *not scheduled* and had *never run in CI*, both now false. Rewrote the
 
 Committed e8d64ab, pushed to main + interlock-v3-crosschain. Kept the discipline:
 the README states exactly which hops are proven and which are not.
+
+## Phase 16.2 — decision: leave the CI send path unproven for now
+
+User decision (2026-09-11): do **not** prove the relay's CI send path before
+judging. The armed demo trio stays pristine for visitors; the Base vault
+`0xCF3EfC03…` is not trip/resume-cycled. The last unproven hop — an actual
+`callRemoteArbitrary` from a GitHub runner — remains honestly disclosed in
+README §7 gap #1. If it should ever be proven, it must be a throwaway trio +
+controlled trip+resume, and only with explicit user go-ahead.
+
+## Phase 16.3 — GitHub `schedule` is CONCLUSIVELY dead for this repo; cron needed
+
+**Timeline:** relay-v3.yml registered `active` 07:55:25Z (with b04045a, verified
+created_at == push time +10s). Kick commit `2ef77a5` (comment-only) pushed
+09:03Z to force re-registration. Final check 09:28Z.
+
+**Evidence it is not firing (checked repeatedly, all facts verified live):**
+
+- Repo-wide `GET /actions/runs?event=schedule` → `total_count: 0` at every check,
+  ~19 cron boundaries over 1h33m (08:00 → 09:25Z). The only run EVER is the
+  manual dispatch #34578430918 (08:17Z).
+- githubstatus.com: **Actions fully operational**, no incidents 09-05..09-11.
+- Workflow object: `state: active`, on default branch `main`, file present at
+  HEAD, YAML parses (dispatch works → `on:` block is valid).
+- Kick did NOT change `updated_at` (still 07:55:25Z) and produced no run.
+
+**Verdict:** GitHub's `schedule` trigger cannot be relied on in this repo (and
+the file has no `push` trigger, so no other in-repo timer exists). The
+"always-on" claim therefore depends on the **external-cron → `workflow_dispatch`**
+path, which IS proven (run #34578430918 was a dispatch). See 16.5 runbook.
+
+## Phase 16.4 — submission application answers drafted
+
+`SUBMISSION-ANSWERS.md` added at repo root — copy-paste answers for the form
+(who it's for, what GenLayer decides, equivalence principles, security section,
+what's still trusted), drawn from the README so the repo and the form never
+disagree. README §10 links it. Commit e169d3b.
+
+## Phase 16.5 — CRON RUNBOOK (the always-on relay, guaranteed)
+
+Goal: dispatch `relay-v3` every 5 minutes regardless of GitHub's schedule
+subsystem. `workflow_dispatch` is proven working in this repo.
+
+**1. Mint a PAT (needs the `workflow` scope)**
+- Classic PAT: scopes `repo` + `workflow`. Or fine-grained: Actions R/W +
+  Metadata R, on this repo only. Store it ONLY in the cron service; never in
+  the repo, never in Vercel env.
+
+**2. Pick a cron service** — cron-job.org (free) or equivalent (EasyCron,
+Google Cloud Scheduler). Set it to fire **every 5 minutes**.
+
+**3. The request it must send (test it once with curl):**
+
+    curl -i -X POST \
+      -H "Authorization: Bearer <PAT>" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/vnd.github+json" \
+      -d '{"ref":"main"}' \
+      https://api.github.com/repos/Temmygabriel/INTERLOCK/actions/workflows/relay-v3.yml/dispatches
+
+  Success = **204**. Then `gh run list --workflow=relay-v3.yml` should show a
+  `workflow_dispatch` run within seconds.
+
+**4. Keep relay-v3.yml's own `*/5` schedule in place** — it is idempotent
+(empty outbox → clean exit 0) and safe to overlap. If GitHub ever starts
+firing it, it's belt-and-braces, not a conflict.
+
+**5. Verify after setup:** the run list should show a `workflow_dispatch`
+relay run roughly every 5 minutes. Read a log once to confirm it reads the
+manifest and polls the outbox (compare with run #34578430918's log).
+
+**Latency claim unchanged** — "~20 s to a few minutes", never instant.
