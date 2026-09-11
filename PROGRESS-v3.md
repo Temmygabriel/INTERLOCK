@@ -733,3 +733,47 @@ way until a reset actually runs.
 `.claude/pending-workflows/` (gitignored) holds copies of all four workflow
 files, because they cannot be committed on this branch without making every
 future push fail. `relay-v3.yml` is also untracked in `.github/workflows/`.
+
+## Phase 14 — README written (task #9, the artifact task)
+
+`README.md` did not exist at the repo root — task #9 was writing it from scratch,
+v3-first, leading with the mandated pitch verbatim. Now committed.
+
+### What it contains
+The mandated pitch as the first blockquote, then: why it is not "an AI that can
+pause things" (pinned read + deterministic guard), the live path diagram, the
+equivalence-rule table (custom `run_nondet` validator, independent re-derivation,
+closed-enum comparison), the can't-move-a-token section, security, honest trust
+boundaries (relay + constitution-setting), the proven-vs-not-proven section, the
+same-chain reference build, layout, and further reading.
+
+### Two overclaims caught while writing it
+1. **"The contract has no transfer call" — false, and corrected.** `withdraw_bond`
+   contains `gl.contract.get_at(sender).emit_transfer(due, on="finalized")`. The
+   corrected section states the narrow, verified truth: the one value transfer
+   returns a reporter's OWN escrowed bond to that SAME reporter; `refundable` has
+   exactly one write site (the confirmed-verdict branch); a false report's bond is
+   locked with no withdrawal path. The section documents the original overclaim
+   and the correction rather than silently editing it.
+2. **"The same-chain build is deployed and exercised on studio-dev" — too strong.**
+   The same-chain live integration tests ran on **studionet**; the studio-dev
+   port's re-verification is still outstanding (task #27), and the deployed page's
+   same-chain section is deliberately inert (`lab: null`). Rewritten to name the
+   network, the suite (16 deterministic + 2 live), and the current gap.
+
+### Claims verified, not assumed, while writing
+- Constitution written exactly once, in `__init__` (`self.constitution` write sites
+  grepped: 1); verdict enum `EXPLOIT_CONFIRMED` / `NOT_CONFIRMED`; effect set
+  `send_trip` / `noop_already_tripped` / `noop_false_report`; incident kinds
+  `TRIP_SENT` / `ALREADY_TRIPPED` / `FALSE_REPORT_REJECTED`.
+- The zkSync forwarder and Base dispatcher share address `0x1567e6…`: computed
+  `CREATE(deployer 0x687B7C90…, nonce 0)` and it derives the shared address —
+  both were the deployer's first contract on their respective chains.
+- The deployed Vercel page serves the v3 build with the manifest baked in
+  (`curl https://interlock-three.vercel.app/config.js` → crosschain +
+  `interlock_v3 0x198b4f9D…`).
+
+### Not done
+Demo video, GenLayer Studio import link, and the actual application-answer
+submission form are not things a repo commit can produce; the README's substance
+is the material they would draw from.
