@@ -1,0 +1,91 @@
+name: relay-v3
+
+# The always-on relay hop. This is what makes the Interlock claim "autonomous"
+# rather than "a script a human runs": once GenLayer validator consensus has
+# confirmed an exploit, the TRIP message sitting in the BridgeSender outbox has
+# to reach Base Sepolia, and nothing else in the system does that.
+#
+#   BridgeSender outbox (GenLayer)
+#     -> BridgeForwarder.callRemoteArbitrary (zkSync Era Sepolia)
+#     -> LayerZero V2
+#     -> BaseTripDispatcher.lzReceive (Base Sepolia)
+#     -> BaseDemoVault.processBridgeMessage("TRIP") -> trip() -> paused = true
+#
+# SCHEDULING / LATENCY (honest version)
+#   The cron is every 5 minutes, but each run polls the outbox every ~20 s for
+#   ~5 minutes, so consecutive runs OVERLAP and a message is normally picked up
+#   within ~20-60 s of landing in the outbox -- NOT within 5 minutes. Deliberately
+#   NO `concurrency` block: a concurrency group with cancel-in-progress:false
+#   would queue each run behind the previous one and destroy exactly this
+#   overlap. GitHub Actions may still delay or drop scheduled runs under load,
+#   and GitHub disables schedules after 60 days of repository inactivity; treat
+#   the relay as "~20 s to a few minutes", never as instant.
+#
+# SAFETY
+#   Every address comes from frontend/demo-manifest.json, so a demo reset that
+#   redeploys the GenLayer trio is picked up with no code change here. Before
+#   sending, the message is validated (target EID, target contract, envelope
+#   localContract, and a canonical "TRIP" payload); anything else is skipped.
+#   The forwarder's own usedTxHash guard plus a per-message isHashUsed() check
+#   make overlapping runs and double-delivery safe. Nothing is sent to a
+#   non-whitelisted target: BaseTripDispatcher would revert UntrustedTarget.
+#
+# TRUST MODEL (do not soften): the destination chain trusts THIS relay to
+# faithfully forward a message that really came from confirmed GenLayer
+# consensus. There is no independent finality proof binding the outbound message
+# to validator consensus. If this workflow stops running, a genuine GenLayer-side
+# trip never reaches Base Sepolia.
+#
+# Secrets required (repo-level):
+#   V3_RELAY_KEY   relay EOA privkey -- holds CALLER_ROLE on the zkSync
+#                  BridgeForwarder and must hold testnet ETH there for the
+#                  quoted LayerZero native fee (it holds no other authority).
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      window:
+        description: 'seconds to keep polling the outbox (default 300)'
+        required: false
+        default: '300'
+      poll:
+        description: 'seconds between outbox polls (default 20)'
+        required: false
+        default: '20'
+
+# No `concurrency` on purpose -- see SCHEDULING / LATENCY above.
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install relay dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            genlayer-py==0.19.0rc2 \
+            web3==8.0.0 \
+            eth-abi
+
+      - name: Relay any pending GenLayer TRIP message to Base Sepolia
+        working-directory: .
+        env:
+          V3_RELAY_KEY: ${{ secrets.V3_RELAY_KEY }}
+          WINDOW: ${{ github.event.inputs.window || '300' }}
+          POLL: ${{ github.event.inputs.poll || '20' }}
+        run: |
+          set -euo pipefail
+          python v3-crosschain/genlayer/scripts/relay_ci.py \
+            --manifest frontend/demo-manifest.json \
+            --window "$WINDOW" --poll "$POLL"

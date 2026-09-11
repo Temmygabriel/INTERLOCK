@@ -1,0 +1,147 @@
+name: deploy-v3-genlayer
+
+# Redeploy the GenLayer leg of the v3 cross-chain stack and re-arm the demo.
+#
+# WHY A FULL REDEPLOY RATHER THAN A RESET: `interlock_v3` is deliberately
+# one-shot — once it has tripped, there is no un-trip, and no admin path back to
+# an actionable state. That is a property of the product, not a gap (a breaker
+# you can quietly un-trip is not a breaker). So resetting the demo means
+# deploying a FRESH trio: demo_vault, BridgeSender, interlock_v3.
+#
+# The Base Sepolia leg is NOT redeployed — `BaseDemoVault.resume()` re-arms it
+# in place (see reset-v3-demo.yml). This workflow only touches GenLayer.
+#
+# What one run does:
+#   1. deploy_v3_studio.py   three fresh contracts, linked to the EXISTING Base
+#                            vault, verified clean (142% coverage, empty audit
+#                            log, nothing tripped, empty outbox)
+#   2. arm_v3_demo.py        demo_vault.borrow(18) => 98% coverage, so there is a
+#                            real, independently-checkable exploit pinned at
+#                            audit[exploit_op_index] for a visitor to report
+#   3. commit                the fresh addresses into frontend/demo-manifest.json
+#                            and push, so Vercel rebuilds the page against them
+#
+# Step 3 is why the frontend resolves its addresses from the manifest rather
+# than from committed defaults: a reset is one committed file, not a dashboard
+# edit.
+#
+# Secrets required (repo-level):
+#   V3_GENLAYER_KEY   studio-dev deployer privkey (deploys the trio and signs the
+#                     arming borrow; holds no authority over the Base vault)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "reset" to confirm redeploying the GenLayer trio'
+        required: true
+        default: ''
+      resume_tx:
+        description: 'optional: BaseDemoVault.resume() tx from reset-v3-demo.yml'
+        required: false
+        default: ''
+
+# A reset must never race another reset: two concurrent runs would each deploy a
+# trio and one would be orphaned (burned gas, a manifest pointing at whichever
+# finished last). Queue instead of cancel.
+concurrency:
+  group: v3-genlayer-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  deploy-and-arm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Require explicit confirmation
+        if: github.event.inputs.confirm != 'reset'
+        run: |
+          echo "::error::Re-run with confirm=reset. Nothing was deployed."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install GenLayer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install genlayer-py==0.19.0rc2
+
+      # ---- 1. fresh trio, linked to the existing Base vault -----------------
+      - name: Deploy fresh GenLayer trio (studio-dev)
+        env:
+          V3_GENLAYER_KEY: ${{ secrets.V3_GENLAYER_KEY }}
+        run: |
+          set -euo pipefail
+          python v3-crosschain/genlayer/scripts/deploy_v3_studio.py \
+            --out "$RUNNER_TEMP/trio.json"
+
+      # ---- 2. pin a real exploit and rewrite the frontend manifest ----------
+      - name: Arm the trio and update frontend/demo-manifest.json
+        env:
+          V3_GENLAYER_KEY: ${{ secrets.V3_GENLAYER_KEY }}
+          RESUME_TX: ${{ github.event.inputs.resume_tx }}
+        run: |
+          set -euo pipefail
+          # Only pass --resume-tx when we were actually handed one: an empty
+          # value would write a blank hash into the manifest and the page would
+          # render a dead explorer link.
+          if [ -n "$RESUME_TX" ]; then
+            python v3-crosschain/genlayer/scripts/arm_v3_demo.py \
+              --from "$RUNNER_TEMP/trio.json" \
+              --into frontend/demo-manifest.json \
+              --resume-tx "$RESUME_TX"
+          else
+            python v3-crosschain/genlayer/scripts/arm_v3_demo.py \
+              --from "$RUNNER_TEMP/trio.json" \
+              --into frontend/demo-manifest.json
+          fi
+
+      # ---- 3. commit the manifest so Vercel rebuilds against the new trio ---
+      - name: Commit the fresh manifest
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- frontend/demo-manifest.json; then
+            echo "manifest unchanged — nothing to commit"
+            exit 0
+          fi
+          git add frontend/demo-manifest.json
+          # Two -m flags rather than a multi-line string: a commit message whose
+          # continuation lines fall back to column 1 would end the YAML block
+          # scalar early and the whole workflow would fail to parse, and an
+          # indented heredoc would write those leading spaces into the message.
+          MSG_SUBJECT="demo: re-arm v3 (fresh GenLayer trio)"
+          MSG_BODY="Deployed and armed by the deploy-v3-genlayer workflow. interlock_v3 is one-shot, so a reset means a fresh trio; the Base Sepolia leg was re-armed in place by resume()."
+          git commit -m "$MSG_SUBJECT" -m "$MSG_BODY"
+          # The default GITHUB_TOKEN can push here: this commit touches no path
+          # under .github/workflows/, which is the only thing needing the
+          # `workflow` scope.
+          git push origin HEAD:main
+
+      # ---- 4. summary -------------------------------------------------------
+      - name: Post-run summary
+        if: always()
+        run: |
+          {
+            echo "## v3 GenLayer leg — reset"
+            echo
+            if [ -f frontend/demo-manifest.json ]; then
+              echo '```json'
+              cat frontend/demo-manifest.json
+              echo '```'
+            fi
+            echo
+            echo "**A visitor can now report entry #$(python -c "import json;print(json.load(open('frontend/demo-manifest.json'))['exploit_op_index'])" 2>/dev/null || echo '?') .**"
+            echo
+            echo "The trip only reaches Base Sepolia if **relay-v3** is running."
+          } >> "$GITHUB_STEP_SUMMARY"

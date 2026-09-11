@@ -1,0 +1,152 @@
+name: reset-v3-demo
+
+# One button to put the whole demo back into a visitor-actionable state.
+#
+# The v3 stack has two independent halves that each need re-arming, for
+# different reasons:
+#
+#   Base Sepolia   `BaseDemoVault.trip()` is guarded by `if (!paused)`, so a
+#                  tripped vault ignores further TRIPs, and `borrow()` reverts
+#                  while paused. `resume()` is the sanctioned way back — it is
+#                  onlyOwner, clears `paused`, and records a `governance_resume`
+#                  audit entry. It does NOT clear the audit log: the previous
+#                  round's trip evidence stays on-chain, which is exactly what a
+#                  verifier wants to see. So this half is re-armed IN PLACE.
+#
+#   GenLayer       `interlock_v3` is one-shot — no un-trip exists, by design. A
+#                  reset therefore means a FRESH trio. So this half is REDEPLOYED.
+#
+# Order matters. `resume()` first: the GenLayer redeploy reads
+# `base_sepolia.vault` out of the manifest and points the new `interlock_v3` at
+# it, and a fresh vault is what the demo wants to be pointing at. The resume tx
+# is then handed to the deploy so the manifest records the re-arm that actually
+# happened, rather than a stale hash from the previous round.
+#
+# This workflow deploys nothing itself — it sequences the two real workflows and
+# passes the tx between them.
+#
+# Secrets required (repo-level):
+#   V3_DEPLOYER_KEY   Base Sepolia vault owner (signs resume(); requires testnet
+#                     ETH on Base Sepolia for gas)
+#   V3_GENLAYER_KEY   studio-dev deployer (used by the called deploy workflow;
+#                     read here only because the secrets context is not
+#                     forwarded to a called reusable workflow's inputs)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "reset" to re-arm Base and redeploy the GenLayer trio'
+        required: true
+        default: ''
+
+concurrency:
+  group: v3-demo-reset
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write   # required to dispatch deploy-v3-genlayer
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Require explicit confirmation
+        if: github.event.inputs.confirm != 'reset'
+        run: |
+          echo "::error::Re-run with confirm=reset. Nothing was reset."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install Base-side dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install web3==8.0.0
+
+      # ---- 1. re-arm the Base Sepolia vault in place ------------------------
+      - name: Resume BaseDemoVault (Base Sepolia)
+        id: resume
+        env:
+          V3_DEPLOYER_KEY: ${{ secrets.V3_DEPLOYER_KEY }}
+        run: |
+          set -euo pipefail
+          # Tee so the operator sees the full run in the log while we still get
+          # a clean handle on the machine-readable RESUME_TX= line.
+          python v3-crosschain/genlayer/scripts/resume_base_vault.py \
+            --manifest frontend/demo-manifest.json | tee "$RUNNER_TEMP/resume.log"
+          TX=$(grep -oE '^RESUME_TX=0x[0-9a-fA-F]{64}$' "$RUNNER_TEMP/resume.log" \
+                 | head -1 | cut -d= -f2 || true)
+          echo "resume_tx=$TX" >> "$GITHUB_OUTPUT"
+          if [ -z "$TX" ]; then
+            # Not a failure: resume() is idempotent and a no-op on a live vault.
+            # Say so plainly rather than leaving the reader to infer it.
+            echo "vault was already live — no resume tx this run"
+          else
+            echo "resumed: https://sepolia.basescan.org/tx/$TX"
+          fi
+
+      # ---- 2. fresh GenLayer trio, armed and committed ----------------------
+      - name: Dispatch deploy-v3-genlayer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESUME_TX: ${{ steps.resume.outputs.resume_tx }}
+        run: |
+          set -euo pipefail
+          # --ref main so the dispatched run builds the same tree we just read.
+          gh workflow run deploy-v3-genlayer.yml \
+            --ref main \
+            -f confirm=reset \
+            -f resume_tx="$RESUME_TX"
+
+      - name: Wait for the GenLayer redeploy to finish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The dispatched run is queued, not started, when `gh workflow run`
+          # returns — so poll for the run id before watching it, or the watch
+          # attaches to the PREVIOUS run and reports a stale result.
+          RID=""
+          for i in $(seq 1 30); do
+            RID=$(gh run list --workflow=deploy-v3-genlayer.yml --branch=main \
+                    --limit 1 --json databaseId,status,createdAt \
+                    --jq '.[0].databaseId' 2>/dev/null || true)
+            if [ -n "$RID" ] && [ "$RID" != "null" ]; then break; fi
+            echo "  waiting for the run to appear… ($i/30)"
+            sleep 10
+          done
+          if [ -z "$RID" ] || [ "$RID" = "null" ]; then
+            echo "::error::dispatched run never appeared in gh run list"
+            exit 1
+          fi
+          echo "watching run $RID"
+          gh run watch "$RID" --exit-status
+
+      # ---- 3. summary -------------------------------------------------------
+      - name: Post-run summary
+        if: always()
+        run: |
+          {
+            echo "## v3 demo reset"
+            echo
+            echo "| Half | Action | Result |"
+            echo "|------|--------|--------|"
+            if [ -n "${{ steps.resume.outputs.resume_tx }}" ]; then
+              echo "| Base Sepolia | \`resume()\` in place | [\`${{ steps.resume.outputs.resume_tx }}\`](https://sepolia.basescan.org/tx/${{ steps.resume.outputs.resume_tx }}) |"
+            else
+              echo "| Base Sepolia | \`resume()\` in place | already live (no-op) |"
+            fi
+            echo "| GenLayer | fresh trio + armed borrow | see the deploy-v3-genlayer run |"
+            echo
+            echo "The page rebuilds from the committed \`frontend/demo-manifest.json\`."
+            echo "**A visitor's report only reaches Base Sepolia while relay-v3 is running.**"
+          } >> "$GITHUB_STEP_SUMMARY"

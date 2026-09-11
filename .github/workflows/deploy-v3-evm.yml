@@ -74,7 +74,9 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: interlock-v3-crosschain
+          # main, not interlock-v3-crosschain: the v3 pivot made the cross-chain
+          # stack the mainline product, and the branch is now a stale mirror.
+          ref: main
 
       - uses: actions/setup-node@v4
         with:
