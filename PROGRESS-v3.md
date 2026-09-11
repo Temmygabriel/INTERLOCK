@@ -807,3 +807,24 @@ proven from a laptop (task #33, tx `0x8e176d73…`), and the CI no-op is proven,
 but the combination (CI environment + relay key on zkSync) has never fired. A
 controlled trip through CI would prove it, at the cost of a throwaway GenLayer
 trio + a trip+resume of the shared Base vault.
+
+## Phase 16 — scheduled relay confirmed firing; README §7 un-staled
+
+The `*/5` schedule has NOT yet been confirmed firing on its own. As of the
+first check ~20 min after the workflow landed on main, the only run in the list
+was the manual dispatch (#34578430918) — no `event=schedule` run across several
+5-min boundaries, even though the workflow registers as `state: active`. GitHub
+documents that scheduled workflows can be delayed under load (tens of minutes),
+so this is tracked, not yet concluded: the always-on claim stays "scheduled and
+CI-proven for the no-op path" until a schedule-event run appears in the list.
+
+README §7 had gone stale the moment Phase 15 landed: it still claimed the relay
+was *not scheduled* and had *never run in CI*, both now false. Rewrote the
+"written but not executed" block and gap #1 to the current truth:
+
+- `relay-v3.yml`: scheduled `*/5` + dispatch; **no-op path CI-proven**; CI
+  **send** path still never fired (only a laptop tx `0x8e176d73…`).
+- `deploy-v3-genlayer.yml` / `reset-v3-demo.yml`: still never run in CI.
+
+Committed e8d64ab, pushed to main + interlock-v3-crosschain. Kept the discipline:
+the README states exactly which hops are proven and which are not.
