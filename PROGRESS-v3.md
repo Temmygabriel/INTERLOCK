@@ -777,3 +777,33 @@ same-chain reference build, layout, and further reading.
 Demo video, GenLayer Studio import link, and the actual application-answer
 submission form are not things a repo commit can produce; the README's substance
 is the material they would draw from.
+
+## Phase 15 — workflow scope granted; relay shipped and proven in CI
+
+The blocker that has held the autonomous hop since Phase 11 is gone. `gh auth
+refresh -h github.com -s workflow` (user, interactive) added the `workflow`
+scope to the shared OAuth token, and with it git's pushes pass the
+`.github/workflows/` gate.
+
+**Pushed (b04045a):** `relay-v3.yml`, `deploy-v3-genlayer.yml`,
+`reset-v3-demo.yml`, and the `deploy-v3-evm.yml` `ref:` → main edit. The
+`.claude/pending-workflows/` copies are now redundant (kept as a local mirror).
+
+**Relay CI PROVEN (run 34578430918, 2m26s, exit 0):** dispatched against the
+armed demo trio's outbox —
+
+    bridge_sender : 0xDf6041aC7Cf024F7903867C4Fcc8391Cf37fec4E
+    vault         : 0xCF3EfC03eb49F36f7a806FD39eDcDD3Db8EaB567  (Base Sepolia, eid 40245)
+      outbox clear (08:17:37)   …(polled every ~15s)…
+    No unrelayed messages — nothing to do (exit 0).
+
+The workflow reads the manifest, polls the real outbox on the production
+schedule shape, and no-ops cleanly — the CI wrapper around the proven script now
+works. The relay runs on `*/5` and is genuinely always-on.
+
+**What is still NOT proven:** the relay's CI *send* path — an actual
+`callRemoteArbitrary` executed from a CI runner. The script's send logic is
+proven from a laptop (task #33, tx `0x8e176d73…`), and the CI no-op is proven,
+but the combination (CI environment + relay key on zkSync) has never fired. A
+controlled trip through CI would prove it, at the cost of a throwaway GenLayer
+trio + a trip+resume of the shared Base vault.
