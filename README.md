@@ -230,22 +230,23 @@ This section exists because a demo that exaggerates is worse than a smaller hone
   called `apply_pause`, and a benign report that was correctly rejected with the bond
   forfeited. Full suite: 18 green.
 
-**Written but not yet executed — do not read these as working**
+**Written and partially exercised — do not read the untested half as working**
 
-- `relay-v3.yml`, `deploy-v3-genlayer.yml`, `reset-v3-demo.yml` have never been run in CI.
-  All four workflows parse as YAML and every `run:` block passes `bash -n`, but static
-  validation is not execution. The relay *script* they invoke has been run locally and
-  works; the CI wrapper around it has not.
-- The reset path (`resume()` + fresh trio) has never been executed as a unit.
+- `deploy-v3-genlayer.yml` and `reset-v3-demo.yml` have never been run in CI. All four
+  workflows parse as YAML and every `run:` block passes `bash -n`, but static validation is
+  not execution. The reset path (`resume()` + fresh trio) has never been executed as a unit.
+- `relay-v3.yml` has run in CI, but only its no-op path: a real run read the manifest,
+  polled the outbox nine times, and exited 0 on an empty outbox. A run that actually
+  forwards a message has never happened.
 
 **Two known current gaps.**
 
-1. **The relay is not scheduled.** The relay workflow cannot be pushed to this repository:
-   the GitHub credential in use carries `gist`, `read:org` and `repo` scopes but **not
-   `workflow`**, and GitHub refuses any push whose commits touch `.github/workflows/`. So at
-   the moment a visitor's report trips the breaker on GenLayer, but nothing is scheduled to
-   carry the message to Base Sepolia. The relay script does this correctly when run; it is
-   simply not running on its own yet. `gh auth refresh -h github.com -s workflow` is the fix.
+1. **The relay's CI *send* path has never fired.** The relay is scheduled (`*/5`, plus
+   manual dispatch) and its empty-outbox path is CI-proven. But no run has ever executed a
+   real `callRemoteArbitrary` from a GitHub runner — that hop has been proven only from a
+   laptop (tx `0x8e176d73…`). Proving it means a controlled trip through CI, which consumes
+   the current GenLayer trio and trips+resumes the shared Base vault, so it is not done
+   casually.
 
 2. **The deployed page's same-chain section is currently inert.** Its lab pair is populated
    only by explicit env vars and deliberately does not fall back to the v3 addresses, so
