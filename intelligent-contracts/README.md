@@ -135,11 +135,18 @@ python -m pytest tests/integration/test_deploy_card.py -v -s    # the permanent 
 python -m pytest tests/integration/test_lab_deploy.py -v -s     # a fresh exploit-lab pair
 ```
 
-> **studionet caveat (why the tests assert at a certain level):** studionet's
-> virtual-value ledger cannot settle `emit_transfer` to a plain wallet address, so
-> `withdraw_bond`'s refund is verified at the parent-escrow-clear + child-emitted
-> level in the tests. On production GenLayer the transfer settles natively. Contract
-> logic is unaffected.
+> **Why the refund asserts where it does:** the payout is an **EthSend** over the
+> `_EoaPay` stub, and an EthSend to a plain wallet creates no intelligent-contract
+> child transaction — there is no contract at the far end to run. So the tests
+> verify the parent's escrow-clearing state and the emitted message, not a child
+> receipt. Do **not** "fix" this by going back to
+> `gl.contract.get_at(eoa).emit_transfer(...)`: that compiles to an IC→IC
+> postmessage, which an externally-owned account cannot receive, so the child
+> transaction errors, the wallet is never credited, and **the parent still reports
+> success**. That failure is not a studionet quirk — it is what an EOA payee does
+> on every GenLayer network. The rail and its live verification are described in
+> `genlayer-known-money-rails-issues.md` and
+> `v3-crosschain/genlayer/scripts/verify_eoa_refund.py`.
 
 Full project narrative, live-address history, and the UI: see `PROGRESS.md` at the
 repo root.

@@ -28,11 +28,11 @@
 export const CONFIG = {
   // GenLayer guard (interlock_v3) — validator consensus, bonded reports, and the
   // TRIP emission. This is the v3 stack, not the same-chain interlock.py.
-  interlock: "0x198b4f9D7d226a59592a17dc39c8D4Af15f3c0Bb",
+  interlock: "0x8d2FdBeA5e09c32DE8870Fa4482871a9ef120592",
   // The evidence vault on GenLayer: the under-collateralized borrow that
   // consensus classifies lives in ITS audit log. It is NOT the vault that gets
   // paused — the pause happens on Base Sepolia (see demo-manifest.json).
-  vault: "0x35ce13653edd7862348A4cAF446F53ECC2654049",
+  vault: "0xbD9690fE7E1F77b43D946D306D96e490B5BfF1a9",
 
   // Populated by build.mjs from demo-manifest.json. Listed here so a plain
   // static serve (no build step) still resolves the cross-chain panel.

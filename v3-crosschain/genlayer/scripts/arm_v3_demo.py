@@ -53,7 +53,16 @@ _TRANSIENT = (
     "Timeout", "timed out", "Too Many Requests", "429", "Internal Server",
     "Method not found", "-32601", "sim_getFeeConfig", "not supported on this chain",
     "read deadline", "Connection reset",
+    # A tx still in flight is not a failure: finalization waits on an appeal
+    # window, so an exhausted poll budget means "not yet", not "no".
+    "did not reach 'finalized'",
 )
+
+# genlayer_py's `interval` is MILLISECONDS (its own default is 3000), not
+# seconds. A small value such as 3 buys ~0.2s of sleep over the entire poll
+# budget, so the wait fails instantly on any tx that is not already finalized.
+WAIT_INTERVAL_MS = 3000
+WAIT_RETRIES = 200
 
 BORROW_AMOUNT = 18  # debt 40 -> 58 vs collateral 57 => 98% coverage
 CONSENSUS = "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575"
@@ -155,7 +164,8 @@ def main() -> int:
         vault, "borrow", account=account, args=[BORROW_AMOUNT], value=0, fees=fees),
         "demo_vault.borrow")
     rec = retry(lambda: client.wait_for_transaction_receipt(
-        tx_hash(tx), wait_until="finalized", interval=3, retries=60), "borrow wait")
+        tx_hash(tx), wait_until="finalized",
+        interval=WAIT_INTERVAL_MS, retries=WAIT_RETRIES), "borrow wait")
     print(f"  demo_vault.borrow({BORROW_AMOUNT}): exec={rec.get('txExecutionResultName')} "
           f"tx={tx_hash(tx)}")
     if not success(rec):
@@ -193,6 +203,14 @@ def main() -> int:
 
     # ---- 4. write the manifest the frontend builds from ----------------------
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # A GenLayer-only reset does NOT re-arm the Base vault, so it must not
+    # restamp `vault_armed_at` — that would date a resume() that never happened.
+    # Only a run actually handed a --resume-tx may claim a fresh arm; otherwise
+    # the previous real record is carried over.
+    if args.resume_tx:
+        armed_at, resume_tx = now, args.resume_tx
+    else:
+        armed_at, resume_tx = base.get("vault_armed_at") or "", base.get("resume_tx") or ""
     manifest = {
         "schema": 1,
         "network": "studio-dev",
@@ -214,7 +232,7 @@ def main() -> int:
             "explorer": base.get("explorer") or "https://sepolia.basescan.org",
             "vault": base["vault"],
             "dispatcher": base["dispatcher"],
-            "vault_armed_at": now,
+            "vault_armed_at": armed_at,
         },
         "zksync_sepolia": {
             "chain_id": int(zksync.get("chain_id") or 300),
@@ -222,10 +240,10 @@ def main() -> int:
             "forwarder": zksync["forwarder"],
         },
     }
-    if args.resume_tx:
-        # Only record a resume tx we were actually handed. A stale hash from a
-        # previous reset would link a visitor to the wrong transaction.
-        manifest["base_sepolia"]["resume_tx"] = args.resume_tx
+    if resume_tx:
+        # Only ever a resume tx we were actually handed (or carried over). A
+        # fabricated hash would link a visitor to the wrong transaction.
+        manifest["base_sepolia"]["resume_tx"] = resume_tx
 
     into.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"\nmanifest -> {into}")

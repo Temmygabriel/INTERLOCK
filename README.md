@@ -80,9 +80,9 @@ paused. Nothing in the diagram below is simulated.
 
 | Role | Chain | Address |
 |---|---|---|
-| `interlock_v3` (the breaker) | GenLayer studio-dev | `0x198b4f9D7d226a59592a17dc39c8D4Af15f3c0Bb` |
-| `demo_vault` (judged target) | GenLayer studio-dev | `0x35ce13653edd7862348A4cAF446F53ECC2654049` |
-| `BridgeSender` (outbox) | GenLayer studio-dev | `0xDf6041aC7Cf024F7903867C4Fcc8391Cf37fec4E` |
+| `interlock_v3` (the breaker) | GenLayer studio-dev | `0x8d2FdBeA5e09c32DE8870Fa4482871a9ef120592` |
+| `demo_vault` (judged target) | GenLayer studio-dev | `0xbD9690fE7E1F77b43D946D306D96e490B5BfF1a9` |
+| `BridgeSender` (outbox) | GenLayer studio-dev | `0x19910A226cb8811542766039D4Eb5050bCEBF105` |
 | `BridgeForwarder` | zkSync Era Sepolia | [`0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5`](https://sepolia.explorer.zksync.io/address/0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5) |
 | `BaseTripDispatcher` | Base Sepolia | [`0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5`](https://sepolia.basescan.org/address/0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5) |
 | `BaseDemoVault` (the victim) | Base Sepolia | [`0xCF3EfC03eb49F36f7a806FD39eDcDD3Db8EaB567`](https://sepolia.basescan.org/address/0xCF3EfC03eb49F36f7a806FD39eDcDD3Db8EaB567) |
@@ -109,7 +109,7 @@ The rule, in full:
 | **Pinned read** | `target_vault.get_audit_entry(op_index)` — a cross-contract read of finalized storage | Deterministic. Every validator replays the identical bytes, so the evidence needs no equivalence rule at all. Cross-contract calls are legal here precisely because this is *not* inside a non-deterministic block. |
 | **Leader** | `gl.nondet.exec_prompt(prompt, response_format="json")` over the pinned JSON, normalized to a closed enum | The prompt is built by deterministic code from chain data. No reporter-supplied text is ever interpolated into it. |
 | **Validator** | **Re-runs the entire classification independently** over the same evidence. Compares only `verdict`. | This is the part that matters. The validator does *not* check that the leader's JSON is well-formed, that the reason string is non-empty, or that the enum is in range — all of which would trust the leader's substantive answer 100%. It derives its own answer and compares. |
-| **Disagreement** | `run_nondet` terminates the VM | No code after it runs. No bond is escrowed, no message is emitted, no state changes. The guard fails shut. |
+| **Disagreement** | `run_nondet` terminates the VM | No code after it runs. No message is emitted, no state changes, the guard fails shut. A VM-level consensus abort cannot be caught in-contract, so a report that dies this way must be re-filed; a judgment failure that surfaces as a catchable `[LLM_ERROR]` instead takes the reject-and-refund path, so the bond is returned rather than retained. |
 
 Malformed model output raises an `[LLM_ERROR]` and the validator turns it into
 disagreement — forcing a consensus retry, never a one-sided verdict. Deterministic
@@ -146,27 +146,51 @@ rather than the intention.
    separate human governance action on the target. *The machine may only ever apply the
    brake.*
 
-**About the one value transfer that does exist.** An earlier draft of this file claimed the
+**About the value transfers that do exist.** An earlier draft of this file claimed the
 contract has no transfer primitive at all. That was wrong, and the correction is worth
-stating precisely rather than quietly fixing. The contract has exactly **one** value-moving
-statement — `gl.contract.get_at(sender).emit_transfer(due, on="finalized")`, inside
-`withdraw_bond()` — and it returns a reporter's **own** escrowed bond to that **same**
-reporter. That is the whole of it:
+stating precisely rather than quietly fixing. The contract has exactly **two** value-moving
+statements, both of which return value to the address that sent it:
 
-- The recipient is always the sender of the withdrawal, looked up by their own address.
-  There is no parameter naming a recipient, so no third party can be paid.
-- It is funded from exactly one storage map, `refundable[reporter]`, which has exactly one
-  write site: the branch that handles a **confirmed** verdict.
+1. `_EoaPay(sender).emit_transfer(value=u256(due))` — inside `withdraw_bond()`. Returns a
+   reporter's **own** escrowed bond to that **same** reporter.
+2. `_EoaPay(gl.message.sender_address).emit_transfer(value=u256(paid))` — inside
+   `_reject_payable()`. Returns the attached bond in the **same transaction** in which a
+   caller-fixable report was refused.
+
+Neither names a recipient parameter, so no third party can be paid. Together they are the
+whole of it:
+
+- The recipient of (1) is always the sender of the withdrawal, looked up by their own
+  address. It is funded from exactly one storage map, `refundable[reporter]`, which has
+  exactly one write site: the branch that handles a **confirmed** verdict.
+- The recipient of (2) is always the sender of the rejected report, and the amount is
+  always exactly what that call attached. The contract's balance is unchanged by the round
+  trip — `_reject_payable` does no other work, and in particular makes no cross-contract
+  call, because anything that could itself fail would revert the transaction and re-trap
+  the bond.
 - A **false** report creates no `refundable` entry, so the bond is simply **locked** — it is
   not swept to the owner, a treasury, or anywhere else. No code path can ever return a
   forfeited bond.
 
+*Why the stub and not the obvious call.* This rail was originally
+`gl.contract.get_at(sender).emit_transfer(due, on="finalized")`, and that form is silently
+broken for a wallet: it compiles to an IC→IC postmessage, and an externally-owned account
+has no contract at it to receive one. The child transaction fails, the wallet is never
+credited, and **the parent still reports success** — so a happy-path assertion catches
+nothing. `@gl.evm.contract_interface` (`_EoaPay`) compiles to an **EthSend**, which credits
+a plain EOA normally; external messages run only on finality, so state is fully committed
+before the transfer executes and the reentrancy safety of `on="finalized"` is preserved.
+The same mistake is why a **reverted** payable call is not a safe rejection: on GenLayer the
+attached value is not refunded and not destroyed — the contract simply retains it, with no
+ledger entry to show for it. Hence (2): caller-fixable rejections accept the call, refund in
+full, record the reason on-chain (`get_rejection`), and return normally rather than raising.
+
 So the precise claim is narrower than "no transfer call", but it is the one that matters:
-the contract can return a reporter's own money to that reporter, and it has no code path
-that can send value — of the protocol's or of anyone else's — to any other party. It holds
-no position in the target protocol, has no approval call, and has no arbitrary-call
-primitive. "Structurally incapable of moving a token" means *the target's* tokens, and that
-is a statement about the absence of those code paths, checkable by reading the file.
+the contract can return a sender's own money to that sender, and it has no code path that
+can send value — of the protocol's or of anyone else's — to any other party. It holds no
+position in the target protocol, has no approval call, and has no arbitrary-call primitive.
+"Structurally incapable of moving a token" means *the target's* tokens, and that is a
+statement about the absence of those code paths, checkable by reading the file.
 
 ---
 
@@ -229,6 +253,21 @@ This section exists because a demo that exaggerates is worse than a smaller hone
   consensus on studionet) — the live pair includes a genuine confirmed exploit that really
   called `apply_pause`, and a benign report that was correctly rejected with the bond
   forfeited. Full suite: 18 green.
+- The **bond-refund rail**, live on studio-dev
+  (`0x76d30ae802c9f400fc7ba6da3ba8ab1cf485b289df12309b188428eebd404e0e`). A report
+  attaching 4 atto against a `min_bond` of 5 was refused **without reverting**: the parent
+  finalized `FINISHED_WITH_RETURN`, `get_rejection(reporter)` returned the reason on-chain,
+  the demo was untouched (still untripped, 0 reports, 0 incidents), and the stored
+  transaction carries **one message, type `External`, value 4, recipient the reporter's own
+  wallet** — recorded by each of the four nodes that executed as a pending transfer with
+  `is_eth_send: true` on `finalized`. That last field is the whole point: it names the
+  rail, and it would read `false` if the transfer were still an IC→IC postmessage.
+  `v3-crosschain/genlayer/scripts/verify_eoa_refund.py` re-runs the check.
+
+  Note the scope of that run: it exercises the payout statement through
+  `_reject_payable()`. The **other** call site, `withdraw_bond()`'s confirmed-verdict
+  refund, uses the same statement but has not been driven live on this trio — the browser
+  trip consumes the guard, and the demo trio is kept untripped.
 
 **Written and partially exercised — do not read the untested half as working**
 

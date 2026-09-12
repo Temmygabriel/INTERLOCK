@@ -73,7 +73,16 @@ _TRANSIENT = (
     "Timeout", "timed out", "Too Many Requests", "429", "Internal Server",
     "Method not found", "-32601", "sim_getFeeConfig", "not supported on this chain",
     "read deadline", "Connection reset",
+    # A tx still in flight is not a failure: finalization waits on an appeal
+    # window, so an exhausted poll budget means "not yet", not "no".
+    "did not reach 'finalized'",
 )
+
+# genlayer_py's `interval` is MILLISECONDS (its own default is 3000), not
+# seconds. A small value such as 3 buys ~0.2s of sleep over the entire poll
+# budget, so the wait fails instantly on any tx that is not already finalized.
+WAIT_INTERVAL_MS = 3000
+WAIT_RETRIES = 200
 
 
 def retry(fn, label, attempts=6):
@@ -99,10 +108,11 @@ def tx_hash(tx):
     return tx.get("hash") if isinstance(tx, dict) else str(tx)
 
 
-def wait(client, tx, label, retries=60):
+def wait(client, tx, label, retries=WAIT_RETRIES):
     def _w():
         return client.wait_for_transaction_receipt(
-            tx_hash(tx), wait_until="finalized", interval=3, retries=retries
+            tx_hash(tx), wait_until="finalized",
+            interval=WAIT_INTERVAL_MS, retries=retries,
         )
     return retry(_w, label + " wait")
 

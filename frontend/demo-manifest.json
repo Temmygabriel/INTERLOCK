@@ -4,13 +4,13 @@
   "chain_id": 61997,
   "genlayer_rpc": "https://studio-dev.genlayer.com/api",
   "consensus": "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575",
-  "deployed_at": "2026-09-10T22:50:15Z",
+  "deployed_at": "2026-09-12T10:07:14Z",
   "min_bond": 5,
   "exploit_op_index": 0,
   "genlayer": {
-    "demo_vault": "0x35ce13653edd7862348A4cAF446F53ECC2654049",
-    "bridge_sender": "0xDf6041aC7Cf024F7903867C4Fcc8391Cf37fec4E",
-    "interlock_v3": "0x198b4f9D7d226a59592a17dc39c8D4Af15f3c0Bb"
+    "demo_vault": "0xbD9690fE7E1F77b43D946D306D96e490B5BfF1a9",
+    "bridge_sender": "0x19910A226cb8811542766039D4Eb5050bCEBF105",
+    "interlock_v3": "0x8d2FdBeA5e09c32DE8870Fa4482871a9ef120592"
   },
   "base_sepolia": {
     "chain_id": 84532,
@@ -19,6 +19,7 @@
     "explorer": "https://sepolia.basescan.org",
     "vault": "0xCF3EfC03eb49F36f7a806FD39eDcDD3Db8EaB567",
     "dispatcher": "0x1567e63787e0fE93653dfe0cC1eaEf554EB237A5",
+    "_vault_armed_at_note": "the Base vault is NOT re-armed by a GenLayer reset; these two fields describe the last real resume(), which is still in force (paused == false, verified live 2026-09-12)",
     "vault_armed_at": "2026-09-10T22:40:00Z",
     "resume_tx": "0x819e256069ea291e484414e55395e275eda160c9a86f3ad2e19f08edfdb954c4"
   },

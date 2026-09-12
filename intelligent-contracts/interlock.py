@@ -36,6 +36,23 @@ VERDICT_CLEAR = "NOT_CONFIRMED"
 # third party, withdraws from the vault, calls resume, or touches the constitution.
 ALLOWED_EFFECTS = ("apply_pause", "noop_already_paused", "noop_false_report")
 
+# The ONLY way this contract can pay a plain wallet. A
+# `gl.contract.get_at(eoa).emit_transfer(...)` compiles to an IC->IC PostMessage,
+# and an externally-owned account has no contract deployed at it to receive one:
+# the child transfer errors, the wallet is never credited, and the parent tx
+# still reports success. Routing the identical transfer through an external EVM
+# contract-interface stub compiles to an EthSend, which credits a chain-layer EOA
+# normally. External messages execute only on finality, so the reentrancy safety
+# of the old `on="finalized"` form is preserved. Construct the stub at CALL time
+# — the v0.3.0 runner does not execute std-object construction at module scope.
+@gl.evm.contract_interface
+class _EoaPay:
+    class View:
+        pass
+
+    class Write:
+        pass
+
 
 def _err_message(x) -> str:
     """Extract a comparable message from a UserError result or exception.
@@ -89,6 +106,7 @@ class Interlock(gl.contract.Contract):
     reports: gl.storage.DynArray[str]   # one JSON record per filed report
     incidents: gl.storage.DynArray[str]  # actionable events only: TRIPPED / FALSE_REPORT_REJECTED
     refundable: gl.storage.TreeMap[str, u256]  # honest reporter address -> bond owed back
+    rejections: gl.storage.TreeMap[str, str]   # reporter key -> why a report was rejected+refunded
 
     def __init__(self, target_vault: Address, governance: Address, min_bond: u256):
         if min_bond <= 0:
@@ -115,8 +133,11 @@ class Interlock(gl.contract.Contract):
                        "pinned evidence is inherently consensus-identical",
             "judgment": "independent validator re-classification over the pinned "
                         "entry; only the closed enum verdict is compared",
-            "bond": "genuine report -> bond returned to reporter; false report -> "
-                    "bond forfeited (locked, no withdrawal path exists)",
+            "bond": "genuine report -> bond returned to the reporter's wallet "
+                    "(external EthSend rail, not an IC->IC postmessage); false "
+                    "report -> bond forfeited (locked, no withdrawal path exists); "
+                    "a caller-fixable rejection (bond below minimum, op_index out "
+                    "of range) is refunded in the same transaction, never retained",
             "effect_set": list(ALLOWED_EFFECTS),
             "unpause": "impossible from this contract; exists only on the target, "
                        "owner-only, by human governance",
@@ -165,6 +186,44 @@ class Interlock(gl.contract.Contract):
             + VERDICT_CLEAR
             + '") and "reason" (one short sentence).'
         )
+
+    # ------------------------------------------------------ payable rejection
+
+    def _reject_payable(self, reason: str, reporter_key: str, op_index: int) -> dict:
+        """Refuse a payable report WITHOUT reverting, so the bond goes home.
+
+        A revert on a payable call does not refund: the contract simply retains
+        the attached value with no ledger entry. So every caller-fixable
+        rejection accepts the call, pays the bond straight back to the
+        reporter's wallet over the external EthSend rail, records why, and
+        returns normally. The contract's balance is unchanged by the round trip.
+
+        Deliberately does NO other work: no evidence read, no consensus, and no
+        cross-contract call. Anything that could itself fail here would revert
+        the transaction and re-trap the bond, which is the exact defect this
+        path exists to avoid.
+        """
+        paid = int(gl.message.value)
+        if paid > 0:
+            _EoaPay(gl.message.sender_address).emit_transfer(value=u256(paid))
+        note = (
+            reason
+            + " — rejected and refunded "
+            + str(paid)
+            + " atto in this transaction; the contract retained nothing"
+        )
+        self.rejections[reporter_key] = note
+        self.last_check_time = self._now()
+        return {
+            "report_id": 0,
+            "op_index": op_index,
+            "verdict": "",
+            "status": "REJECTED_REFUNDED",
+            "bond": paid,
+            "effect": "noop_rejected_refunded",
+            "tripped": self.tripped,
+            "rejection": note,
+        }
 
     # ------------------------------------------------------------ public views
 
@@ -217,6 +276,15 @@ class Interlock(gl.contract.Contract):
         """
         return int(self.refundable.get(_canon_str(reporter), u256(0)))
 
+    @gl.public.view
+    def get_rejection(self, reporter: str) -> str:
+        """Why the last report from ``reporter`` was refused, or "" if none was.
+
+        A rejected payable call SUCCEEDS (see ``_reject_payable``), so there is no
+        revert string to read — the reason is stored on-chain and read back here.
+        """
+        return self.rejections.get(_canon_str(reporter), "")
+
     # ---------------------------------------------------------- the report path
 
     @gl.public.write.payable
@@ -231,17 +299,24 @@ class Interlock(gl.contract.Contract):
         reporter = gl.message.sender_address
         reporter_key = _canon_addr(reporter)
         bond = int(gl.message.value)
+        idx = int(op_index)
 
+        # Caller-fixable rejections must NOT revert: a revert on a payable call
+        # retains the attached value in the contract with no ledger entry. Refund
+        # in the same transaction instead and return normally (see _reject_payable).
         if bond < int(self.min_bond):
-            raise gl.vm.UserError(
-                ERROR_EXPECTED + " bond below minimum — send at least min_bond with the report"
+            return self._reject_payable(
+                ERROR_EXPECTED + " bond below minimum — send at least min_bond with the report",
+                reporter_key,
+                idx,
             )
 
-        idx = int(op_index)
         audit_len = self._audit_len()
         if idx < 0 or idx >= audit_len:
-            raise gl.vm.UserError(
-                ERROR_EXPECTED + " op_index out of range (audit length " + str(audit_len) + ")"
+            return self._reject_payable(
+                ERROR_EXPECTED + " op_index out of range (audit length " + str(audit_len) + ")",
+                reporter_key,
+                idx,
             )
 
         # ---- 1. PINNED READ ------------------------------------------------
@@ -294,7 +369,18 @@ class Interlock(gl.contract.Contract):
             except Exception:
                 return False
 
-        raw_result = gl.vm.run_nondet(classify, validate)
+        # A judgment failure that surfaces as a catchable UserError is still a
+        # caller-visible failure on a payable call — refund rather than retain.
+        # (A VM-level consensus abort — Disagree — cannot be caught here; the
+        # fully-safe form is the two-phase split, see PROGRESS-v3.md Phase 17.)
+        try:
+            raw_result = gl.vm.run_nondet(classify, validate)
+        except gl.vm.UserError as e:
+            return self._reject_payable(
+                ERROR_LLM + " judgment could not be completed: " + _err_message(e),
+                reporter_key,
+                idx,
+            )
         # run_nondet returns the leader's verdict directly (or wraps it in a
         # Result). Unwrap defensively, then proceed only on a real verdict dict.
         if isinstance(raw_result, gl.vm.Return):
@@ -404,7 +490,11 @@ class Interlock(gl.contract.Contract):
         if due <= 0:
             raise gl.vm.UserError(ERROR_EXPECTED + " nothing to withdraw")
         self.refundable[key] = u256(0)
-        gl.contract.get_at(sender).emit_transfer(due, on="finalized")
+        # External EthSend rail: a plain wallet has no contract to receive an
+        # IC->IC transfer, so `gl.contract.get_at(eoa).emit_transfer(...)` would
+        # finalize with the child in error and credit nobody. The stub compiles
+        # to an EthSend, which credits an EOA normally, and runs only on finality.
+        _EoaPay(sender).emit_transfer(value=u256(due))
 
 
 def _canon_addr(addr) -> str:

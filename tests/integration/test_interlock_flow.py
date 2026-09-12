@@ -119,12 +119,11 @@ def test_confirmed_exploit_trips_guard_pauses_vault_and_refunds(world):
 
     # Honest reporter withdraws their escrowed bond. The contract-level guarantee
     # is the ledger: escrow credited once, cleared exactly once, nothing left to
-    # withdraw. The refund itself is an emit_transfer to the reporter's EOA,
-    # which the hosted studionet cannot settle (its value ledger only knows
-    # deployed contracts -> child errors "Contract 0x… not found"); on a
-    # production network it settles natively to the reporter's account. So we
-    # finalize the parent (escrow clear) and assert the transfer child WAS
-    # emitted, but do not require the child to settle on studionet.
+    # withdraw. The refund is emitted over the external EthSend rail (_EoaPay),
+    # which credits a plain wallet. Before that fix it used
+    # gl.contract.get_at(eoa).emit_transfer(...) — an IC->IC PostMessage that an
+    # address with no contract cannot receive: the child errored, no wallet was
+    # ever credited, and the parent still reported success.
     wrec = write(world.client, world.interlock, "withdraw_bond", world.honest)
     _, children = finalize_parent(world.client, wrec["tx_id"])
     assert len(children) >= 1, "withdraw must emit the bond-refund transfer"

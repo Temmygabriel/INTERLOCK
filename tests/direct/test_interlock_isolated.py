@@ -57,16 +57,33 @@ def test_withdraw_bond_reverts_when_nothing_owed(direct_vm, interlock, addr):
     assert "nothing to withdraw" in str(exc.value)
 
 
-def test_bond_below_minimum_reverts_before_any_vault_access(direct_vm, interlock, addr):
+def test_bond_below_minimum_rejects_and_refunds_before_any_vault_access(
+    direct_vm, interlock, addr
+):
     """The bond gate is the first thing report_exploit does: under-min reports are
-    rejected deterministically, before any evidence read or consensus — a report
-    cannot even start without skin in the game."""
+    refused deterministically, before any evidence read or consensus — a report
+    cannot even start without skin in the game.
+
+    It must REFUSE, not revert. A revert on a payable call retains the attached
+    value in the contract with no ledger entry, so the under-min bond would be
+    silently swallowed. The call therefore succeeds, returns
+    REJECTED_REFUNDED, and records the reason on-chain (there is no revert
+    string to read once the call succeeds)."""
     direct_vm.sender = addr("alice")
     direct_vm.value = MIN_BOND - 1  # 4 < 5
-    with pytest.raises(Exception) as exc:
-        interlock.report_exploit(0)
-    assert "bond below minimum" in str(exc.value)
+    out = interlock.report_exploit(0)
+    assert out["status"] == "REJECTED_REFUNDED"
+    assert out["effect"] == "noop_rejected_refunded"
+    assert out["report_id"] == 0
+    assert "bond below minimum" in out["rejection"]
+    assert "refunded" in out["rejection"]
+
+    # The reason is also readable through the view, keyed by the reporter.
+    assert "bond below minimum" in interlock.get_rejection(str(addr("alice")))
+
+    # No report was recorded, no escrow opened, and the bond was not retained.
     assert interlock.status()["report_count"] == 0
+    assert interlock.refundable_of(str(addr("alice"))) == 0
     direct_vm.value = 0
 
 

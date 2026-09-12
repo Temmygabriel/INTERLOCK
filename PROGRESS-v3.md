@@ -995,3 +995,127 @@ direct suite as a studio-dev control.
 2. **(C)/(B)** payable-revert retention.
 3. **(D)** child-transaction verification for the refund.
 4. **(F)** reconcile the direct-test SDK version.
+
+## Phase 18 — all four Phase-17 items fixed, redeployed, and the refund rail verified live (2026-09-12)
+
+Phase 17 was an assessment. This is the remediation, and the one thing in this repo that
+had been *claimed but never checked*: the money-out path.
+
+### What changed
+
+**(A) The EOA payout rail.** Both contracts now declare
+
+```python
+@gl.evm.contract_interface
+class _EoaPay:
+    class View:
+        pass
+    class Write:
+        pass
+```
+
+and every wallet payout goes through it — `interlock_v3.py` at the `_reject_payable` and
+`withdraw_bond` sites, `intelligent-contracts/interlock.py` at the same two. It compiles to
+an **EthSend**. The old form, `gl.contract.get_at(eoa).emit_transfer(...)`, compiles to an
+IC→IC PostMessage, which an address with no contract at it cannot receive. Re-ran the
+issues-file grep: every remaining `get_at` in both contracts targets `target_vault` or
+`bridge_sender` — **contracts** — so no EOA-targeted IC transfer is left.
+
+**(B) Reject-and-refund.** `report_exploit` is payable and had two `raise` branches on
+caller-fixable input (bond below `min_bond`, `op_index` out of range). A reverted payable
+call does not refund on GenLayer — the contract keeps the value with no ledger entry — so
+both branches now `return self._reject_payable(...)`: accept, refund in full in the same
+transaction, record the reason, return normally. Because the call now *succeeds*, there is
+no revert message to read, so the reason is stored on-chain and exposed via a new
+`get_rejection(reporter)` view.
+
+`_reject_payable` deliberately does **no other work** — no evidence read, no consensus, and
+in particular **no cross-contract call**. My first draft put `self._is_vault_paused()` in its
+return dict, which would have added a `get_at` to the refund path; anything that fails there
+reverts the transaction and re-traps the very bond the path exists to return. Caught before
+deploy. It returns `tripped` (local storage) instead.
+
+**(C) The residual, stated rather than papered over.** The judgment call is wrapped so a
+catchable `gl.vm.UserError` (`[LLM_ERROR]` etc.) takes the reject-and-refund path too. But a
+**VM-level consensus abort is not catchable** — if `run_nondet` aborts at the VM level rather
+than raising into the contract, the bond is retained exactly as in (B). The file's own
+prescription for that is the two-phase split: a deterministic payable escrow step, then a
+separate **non-payable** judgment step, so a judgment failure reverts a zero-value call. That
+changes the ABI and the frontend flow, so it was **not** done — it is the honest remaining
+gap, recorded in README §5 rather than claimed as fixed.
+
+**(F) The direct-test SDK.** `tests/direct/conftest.py` now states plainly that the suite
+**cannot currently run** — the cached gltest runner bundle has no `5jycge4q8…` entry, so
+`sdk_loader` raises `ValueError: Runner hash … not found` and every direct test errors at
+setup. That is a harness limitation, not a contract defect, but it also means a direct run
+would have been a control on the *wrong runner*, which is the file's §1.3 point. Documented
+as such, with the live studio-dev deploy named as the real check.
+
+One direct test was rewritten rather than deleted: the below-minimum-bond test asserted a
+revert and now asserts `REJECTED_REFUNDED` / `noop_rejected_refunded` / `report_id == 0` /
+`report_count == 0` / `refundable_of == 0` / the note text. It cannot run today, but it
+encodes the current contract rather than the old one.
+
+### The verification (Phase-17 item D)
+
+`v3-crosschain/genlayer/scripts/verify_eoa_refund.py` — new. It drives the payout rail
+through the rejection path (`report_exploit(0)`, value 4 against `min_bond` 5), which is the
+only way to touch a payout **without** consuming the demo trio.
+
+Result on the redeployed `interlock_v3` (`0x8d2FdBeA…`), tx
+**`0x76d30ae802c9f400fc7ba6da3ba8ab1cf485b289df12309b188428eebd404e0e`**: 5/5 PASS —
+parent `FINISHED_WITH_RETURN`; the `[EXPECTED] bond below minimum … refunded 4 atto` note
+readable from `get_rejection`; demo untouched (untripped, 0 reports, 0 incidents); one
+emitted message, `messageType` **External**, value 4, recipient = the reporter's wallet;
+and each of the four executing nodes recorded the same pending transfer with
+**`is_eth_send: true`** and `on: "finalized"`.
+
+**`is_eth_send` is the field to look at.** It names the rail outright — `true` is the
+EthSend stub, `false` would be the PostMessage. A second thing worth stating, because the
+issues file's checklist says to "enumerate the child transactions" and that check would have
+**failed a correct fix**: `triggered_transactions` is `[]` here, and that is right. It lists
+children of *internal* messages, and an EthSend to a wallet has no contract at the far end to
+run, so it spawns no child. The old rail is the one that spawned a child — and that child is
+the one that errored while the parent reported success. Two of my own drafts of this script
+asserted the wrong thing before the stored transaction was read directly:
+`get_triggered_transaction_ids` (blind to external messages) and then a per-validator
+`recipient` key (the record uses `address`, and only the executing nodes carry one — 4 of 6
+here, not all). The script now prints the raw records so neither has to be taken on faith.
+
+### Two harness findings, both cost a wasted run
+
+1. **`genlayer_py`'s `interval` is MILLISECONDS** (its own default is 3000), not seconds. A
+   poll written as `interval=3` buys ~0.2 s of sleep across the entire retry budget and
+   reports "polling every 3ms for a total of 0.2s" on any transaction that has not already
+   finalized. Corrected in all four v3 scripts (`verify_eoa_refund`, `deploy_v3_studio`,
+   `arm_v3_demo`, `run_trip_v3`) — the reset automation depends on two of them.
+2. **A write that EMITS a message needs `estimate_transaction_fees_for_write`.** The plain
+   `estimate_transaction_fees()` returns a budget with no `messageAllocations` at all, and
+   the emission then fails `fee no_matching_allocation # internal` → the parent finalizes
+   `FINISHED_WITH_ERROR` even though the contract logic is correct. `_for_write` simulates
+   the call and returns an allocation per emitted message. This is the same cause already
+   documented in `run_trip_v3.py` for the `send_message` emit; it applies equally to
+   `withdraw_bond`, and the browser path already handles it (`frontend/tx.js`).
+
+### Redeploy and manifest
+
+Fresh trio deployed on studio-dev and armed against the **same** Base vault
+(`0xCF3EfC03…`) — checked `paused == false` first, so no `resume()` was needed and none was
+sent. `frontend/demo-manifest.json`, `frontend/config.js`, and README §2 carry the new
+addresses.
+
+`arm_v3_demo.py` had a latent lie: a GenLayer-only reset stamped a fresh `vault_armed_at`
+even though the Base vault is not re-armed by it, and dropped the real `resume_tx`. Fixed —
+it now carries both fields over unless `--resume-tx` is passed, and the manifest says in a
+comment which `resume()` the timestamps actually describe (the real one, still in force).
+
+### Still not done
+
+- **(C)** the two-phase split — the residual above. Not a claim, a gap.
+- **`withdraw_bond()`'s own payout has not been driven live.** Same statement, different call
+  site; the verification covers `_reject_payable`. Driving it means consuming the trio.
+- The refund rail is verified on **studio-dev**. The transaction is real, the message is
+  real, the `is_eth_send` flag is real; no wallet balance was read before/after, because the
+  refund is 4 atto against ~7.7e14 atto of gas and a delta that size is not observable.
+- `genvm-lint lint` clean on both contracts (3 checks, exit 0) — run with
+  `PYTHONIOENCODING=utf-8`, since the check glyph crashes a cp1252 console.

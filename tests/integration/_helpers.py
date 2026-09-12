@@ -125,15 +125,16 @@ def finalize_parent(client, tx) -> tuple:
     without asserting children succeed.
 
     Used for ``withdraw_bond``: the refund is an ``emit_transfer`` to the
-    reporter's *account*. On the hosted studionet that child cannot settle —
-    its virtual value ledger only knows deployed contracts, so a plain EOA
-    recipient fails with "Contract 0x… not found" (verified live). That is a
-    platform settlement detail, not a contract defect: the parent determinis-
-    tically clears the escrow ledger and the movement targets the reporter's
-    own account, which settles natively on a production GenLayer network. The
-    contract-level guarantees (escrow credited once, cleared once, no residual)
-    are asserted on the parent path; the child's existence proves the transfer
-    was emitted.
+    reporter's *account*. Older runs used the IC->IC rail
+    (``gl.contract.get_at(eoa).emit_transfer(...)``), which a plain EOA cannot
+    receive — the child failed with "Contract 0x… not found" and the wallet was
+    never credited while the parent still reported success. The fixed contract
+    uses the external EthSend rail (``_EoaPay``) instead, which is what a wallet
+    can actually receive. This helper therefore does not assert the child's
+    success: whether the transfer settles is a platform/network property, and
+    the contract-level guarantees (escrow credited once, cleared once, no
+    residual) are asserted on the parent path; the child's existence proves the
+    transfer was emitted.
     """
     rec = wait_status(client, tx, TransactionStatus.FINALIZED, "finalize withdraw parent")
     assert tx_execution_succeeded(rec), "withdraw parent did not execute cleanly"
