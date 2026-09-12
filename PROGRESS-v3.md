@@ -900,3 +900,98 @@ relay run roughly every 5 minutes. Read a log once to confirm it reads the
 manifest and polls the outbox (compare with run #34578430918's log).
 
 **Latency claim unchanged** — "~20 s to a few minutes", never instant.
+
+## Phase 17 — audit against the two GenLayer known-issues files (2026-09-12)
+
+Reviewed `genlayer-studio-dev-deploy-issues.md` and
+`genlayer-known-money-rails-issues.md` against this repo's contracts. Findings,
+with severity and exact sites. **Nothing here has been changed yet — this is an
+assessment.**
+
+### APPLICABLE — real, each needs a decision
+
+**A. Money-rails Issue 1 — the bond refund to an EOA silently fails. SEVERITY: HIGH.**
+`v3-crosschain/genlayer/interlock_v3.py:498` and `intelligent-contracts/interlock.py:407`:
+
+    gl.contract.get_at(sender).emit_transfer(due, on="finalized")
+
+`sender = gl.message.sender_address` — the reporter's **wallet (EOA)**. The
+money-rails file (PROVEN LIVE on the sibling project) shows an IC→IC
+`emit_transfer` to an address with no deployed contract targets a PostMessage an
+EOA cannot receive: the child transfer errors, the wallet is never credited, and
+**the parent tx still reports success**. Line 497 already zeroed
+`refundable[key]`, so the bond is gone with no ledger entry.
+
+Consequence for THIS repo: the README §4 statement that the reporter "reclaims
+their exact bond", the page string "your bond … is escrowed and refundable"
+(`frontend/app.js:437`), and the docstring "an honest reporter reclaims their
+exact bond" are **not what happens on-chain today**. The *other* `get_at`
+transfers (the `apply_pause` call at 324, the `bridge_sender` emit at 402)
+target **contracts**, so Issue 1 does not apply to them — `withdraw_bond` is the
+only EOA-targeted transfer in the repo.
+
+*Fix (from the file):* an `@gl.evm.contract_interface` stub —
+`_EoaPay(sender).emit_transfer(value=gl.u256(due))` — which compiles to an
+EthSend that credits an EOA. External messages run only on finality, so the
+`on="finalized"` reentrancy safety is preserved.
+
+**B. Money-rails Issue 2 — payable `report_exploit` reverts on caller-fixable input, retaining the bond. SEVERITY: MEDIUM.**
+`interlock_v3.py:291` is `@gl.public.write.payable`; `:305-309` (bond below
+`min_bond`) and `:313-316` (`op_index` out of range) `raise` on input the caller
+could have fixed. Per the file, a reverted payable call does **not** refund — the
+attached value is retained by the contract with no ledger entry. The frontend
+does attach value (`app.js:379`, `value: bond`).
+
+*Fix:* the reject-and-refund pattern (`_reject_payable` + an on-chain
+`get_rejection` view, since a successful call has no revert message), or hoist
+the cheap checks so value is never accepted on a doomed call.
+
+**C. Money-rails Issue 2 corollary — nondeterministic work inside a payable method. SEVERITY: MEDIUM.**
+`report_exploit` (payable) runs `gl.vm.run_nondet(classify, validate)` at `:366`.
+If judgment exhausts rotations/errors, the call reverts **with the bond
+attached** → retained. File's corollary: split a deterministic payable escrow
+step from a separate non-payable judgment step, so a judgment failure reverts a
+zero-value call (retryable, nothing burned). This changes the ABI/UX, so it is a
+design decision, not a one-liner.
+
+**D. Money-rails Issue 3 — no money-out verification. SEVERITY: PROCESS.**
+The refund has only ever been checked by "the tx succeeded" (parent status).
+Required: enumerate **child transactions**, assert each FINALIZED + error-free,
+recipient == expected EOA, and reconcile balances after finality. This is exactly
+the check that would have caught (A).
+
+### PARTIALLY APPLICABLE — robustness, not live defects
+
+**E. Deploy §3.3 — "FINALIZED is not success".** `deploy_v3_studio.py:110` gates
+on `txExecutionResultName == "FINISHED_WITH_RETURN"` **and** a non-empty contract
+address, which a fee-starved `NO_MAJORITY` tx would not satisfy — so the trap is
+mostly covered. Tightening to also require the vote/activator fields the file
+names would be belt-and-braces. No live defect (deploys demonstrably work).
+
+**F. Deploy §1.3/§5 — a control must differ from the suspect.**
+`tests/direct/conftest.py` documents running the **v0.2.16** SDK while all four
+contracts now pin the **v0.3.0** runner (`5jycge4q8…`). A passing direct test is
+evidence about v0.2.16 semantics, not studio-dev — the same family as the file's
+"a studionet pass says nothing about studio-dev". Reconcile before treating the
+direct suite as a studio-dev control.
+
+### NOT APPLICABLE
+
+- **Failure A (v0.2.x schema):** all four contracts already pin v0.3.0 and use
+  the `import genlayer as gl` surface.
+- **Failure B / fees:** deploys use the SDK's `estimate_transaction_fees()`, not
+  the CLI `--fee-value` path; deploys succeed.
+- **The `run_nondet` meaning-change trap:** *deliberately correct here.* Both
+  contracts call `gl.vm.run_nondet(classify, validate)` for a **custom**
+  validator — the v0.3.0 name for the manual/unsandboxed variant, which is
+  required because the validator re-runs `exec_prompt` itself. A reflexive
+  `→ run_nondet_default` would have broken the independent-re-derivation
+  guarantee. Verified intentional.
+- **Issue 4 (Bradbury pubdata cap):** studio-dev only; no Bradbury deploy.
+
+### Recommended fix order
+1. **(A)** the refund rail — the only item that contradicts a README *and* a live
+   page claim, and the rail the pitch's honesty section is built on.
+2. **(C)/(B)** payable-revert retention.
+3. **(D)** child-transaction verification for the refund.
+4. **(F)** reconcile the direct-test SDK version.
